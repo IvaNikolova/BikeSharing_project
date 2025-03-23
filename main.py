@@ -4,8 +4,8 @@ import pandas as pd
 def show_toronto_map():
     # Create a dummy DataFrame just to initialize the map
     df = pd.DataFrame({
-        'lat': [43.651070],
-        'lon': [-79.347015]
+        'lat': [60.3913],
+        'lon': [5.3221]
     })
 
     fig = px.scatter_map(
@@ -14,7 +14,7 @@ def show_toronto_map():
         lon="lon",
         zoom=11,
         height=900,
-        title="Toronto City Map"
+        title="Bergen City Map"
     )
 
     fig.update_layout(
