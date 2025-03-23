@@ -1,31 +1,27 @@
 import plotly.express as px
 import pandas as pd
 
-def show_toronto_map():
-    # Create a dummy DataFrame just to initialize the map
-    df = pd.DataFrame({
-        'lat': [60.3913],
-        'lon': [5.3221]
-    })
+def show_madrid_map():
+    # Load your stations data
+    df = pd.read_csv('datasets/all_stations.csv')
 
     fig = px.scatter_map(
         df,
         lat="lat",
         lon="lon",
-        zoom=11,
+        hover_name="unlock_station_name",   # Show station name when hovering
+        zoom=12,
         height=900,
-        title="Bergen City Map"
+        title="Bike Stations in Madrid"
     )
 
     fig.update_layout(
-        mapbox_style="open-street-map",  # Open source style, no token needed
+        mapbox_style="open-street-map",
+        mapbox_center={"lat": 60.3913, "lon": 5.3221},
         margin={"r": 0, "t": 40, "l": 0, "b": 0}
     )
-
-    # Hide the dummy point
-    fig.data[0].marker.opacity = 0
 
     fig.show()
 
 if __name__ == "__main__":
-    show_toronto_map()
+    show_madrid_map()
