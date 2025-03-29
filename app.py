@@ -108,7 +108,7 @@ def update_simulation(n, selected_date_str):
 
     # Stations start with 5 bikes and the simulation starts from midnight of the chosen day
     if n == 0 or selected_date_str not in bike_counts_global:
-        bike_counts_global[selected_date_str] = {sid: 5 for sid in station_df['station_id']}
+        bike_counts_global[selected_date_str] = {sid: 7 for sid in station_df['station_id']}
         last_sim_time_global[selected_date_str] = sim_date
 
     bike_counts = bike_counts_global[selected_date_str]
@@ -152,7 +152,22 @@ def update_simulation(n, selected_date_str):
             })
 
     if missed_trip_rows:
-        pd.DataFrame(missed_trip_rows).to_csv("datasets/missed_trips.csv", mode='a', index=False, header=False)
+        new_df = pd.DataFrame(missed_trip_rows)
+
+        if os.path.exists("datasets/missed_trips.csv"):
+            existing_df = pd.read_csv("datasets/missed_trips.csv")
+
+            # Clean up: drop empty or NA-only rows
+            existing_df = existing_df.dropna(how="all")
+            new_df = new_df.dropna(how="all")
+
+            combined_df = pd.concat([existing_df, new_df]).drop_duplicates(subset=["trip_id", "simulated_day"])
+        else:
+            combined_df = new_df
+
+        combined_df.to_csv("datasets/missed_trips.csv", index=False)
+
+
 
     last_sim_time_global[selected_date_str] = current_sim_time
 
