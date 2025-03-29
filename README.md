@@ -15,6 +15,7 @@ A real-time simulation of bike-sharing activity in Madrid using historical trip 
 - Interactive progress bar and hover tooltips
 - Custom layout with sidebar legend
 
+![Simulation Pic](screenshot.png)
 ---
 
 ## Goal
