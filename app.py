@@ -32,7 +32,8 @@ if not os.path.exists("missed_trips.csv"):
 
 # === Global simulation state ===
 bike_counts_global = {} # dict of current bikes per station {station_id: bike_count}
-last_sim_time_global = {} #  to track simulation time for each selected day
+last_sim_time_global = {} # to track simulation time for each selected day
+pending_returns_global = {} 
 
 # === Dash App ===
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
@@ -97,6 +98,13 @@ def update_simulation(n, selected_date_str):
     trip_df = trip_dfs[selected_date_str]
     sim_date = datetime.strptime(selected_date_str, "%Y-%m-%d")
     current_sim_time = sim_date + timedelta(seconds=n * SPEED_MULTIPLIER)
+    
+    # Create pending return list if it's the first time
+    if selected_date_str not in pending_returns_global:
+        pending_returns_global[selected_date_str] = []
+
+    pending_returns = pending_returns_global[selected_date_str]
+
 
     # Stations start with 5 bikes and the simulation starts from midnight of the chosen day
     if n == 0 or selected_date_str not in bike_counts_global:
@@ -105,27 +113,39 @@ def update_simulation(n, selected_date_str):
 
     bike_counts = bike_counts_global[selected_date_str]
     last_time = last_sim_time_global[selected_date_str]
+    
+    # Return bikes whose end_time has arrived
+    to_return = [trip for trip in pending_returns if trip['end_time'] <= current_sim_time]
+    for trip in to_return:
+        end_id = trip['end_id']
+        bike_counts[end_id] = bike_counts.get(end_id, 0) + 1
+        pending_returns.remove(trip)
 
     new_trips = trip_df[
         (trip_df['start_time'] >= last_time) &
         (trip_df['start_time'] < current_sim_time)
     ]
+    
     missed_trips = 0  # initialize missed counter
     missed_trip_rows = []
 
     for _, trip in new_trips.iterrows():
         start_id = trip['start_station_id']
         end_id = trip['end_station_id']
-        
+        end_time = trip['end_time']
+
         if bike_counts.get(start_id, 0) > 0:
             bike_counts[start_id] -= 1
-            bike_counts[end_id] = bike_counts.get(end_id, 0) + 1
+            pending_returns.append({
+                "end_time": end_time,
+                "end_id": end_id
+            })
         else:
             missed_trips += 1
             missed_trip_rows.append({
                 "trip_id": trip['trip_id'],
                 "start_time": trip['start_time'],
-                "end_time": trip['end_time'],
+                "end_time": end_time,
                 "start_station_id": start_id,
                 "end_station_id": end_id,
                 "simulated_day": selected_date_str
