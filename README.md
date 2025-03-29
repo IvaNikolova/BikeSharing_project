@@ -27,6 +27,8 @@ A real-time simulation of bike-sharing activity in Madrid using historical trip 
 **TO DO next**
 - Top missed stations (where most missed trips occurred)
 - Station status indicators: busy, idle, always empty/full
+- Configurable Initial Station Stock
+  - The number of bikes per station at simulation start can be adjusted to test different system load conditions and see how they affect missed trip rates and station overload.
 
 ![Simulation Pic](screenshot.png)
 ---
