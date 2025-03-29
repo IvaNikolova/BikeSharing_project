@@ -6,14 +6,16 @@ import pandas as pd
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
 import warnings
+import os
 
+# To ignore the warning about the Scattermap
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 # === Simulation Settings ===
 REAL_DURATION_MINUTES = 5
 SIM_DURATION_REAL_SECONDS = REAL_DURATION_MINUTES * 60
 SIM_TOTAL_SECONDS = 24 * 60 * 60  # simulate 24h
-SPEED_MULTIPLIER = SIM_TOTAL_SECONDS / SIM_DURATION_REAL_SECONDS
+SPEED_MULTIPLIER = SIM_TOTAL_SECONDS / SIM_DURATION_REAL_SECONDS # Every real second = 86400 / 300 = 288 seconds of simulation.
 
 # === Load data ===
 station_df = pd.read_csv("datasets/all_stations.csv")
@@ -22,9 +24,15 @@ trip_dfs = {
     "2022-05-11": pd.read_csv("datasets/all_trips_05_11.csv", parse_dates=["start_time", "end_time"]),
 }
 
+if not os.path.exists("missed_trips.csv"):
+    pd.DataFrame(columns=[
+        "trip_id", "start_time", "end_time", "start_station_id", "end_station_id", "simulated_day"
+    ]).to_csv("datasets/missed_trips.csv", index=False)
+
+
 # === Global simulation state ===
-bike_counts_global = {}
-last_sim_time_global = {}
+bike_counts_global = {} # dict of current bikes per station {station_id: bike_count}
+last_sim_time_global = {} #  to track simulation time for each selected day
 
 # === Dash App ===
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
@@ -61,26 +69,25 @@ app.layout = html.Div([
             html.Div("🟧 Low (1–4 bikes)", style={'color': 'orange', 'fontSize': '16px', 'margin-bottom': '10px'}),
             html.Div("🟩 Healthy (5–10 bikes)", style={'color': 'green', 'fontSize': '16px', 'margin-bottom': '10px'}),
             html.Div("🟦 Overstocked (>10 bikes)", style={'color': 'blue', 'fontSize': '16px', 'margin-bottom': '10px'}),
+            html.Div(id='missed-trips', style={'fontSize': '18px', 'marginTop': '10px'}),
         ], style={'width': '15%', 'display': 'inline-block', 'padding': '15px 20px', 'borderLeft': '1px solid #ccc', 'height': '85vh'})
+        
     ])
 ])
 
 # === Helper functions ===
 def get_color(bike_count):
-    if bike_count == 0:
-        return "red"
-    elif bike_count < 5:
-        return "orange"
-    elif 5 <= bike_count <= 10:
-        return "green"
-    else:
-        return "blue"
+    if bike_count == 0: return "red"
+    elif bike_count < 5: return "orange"
+    elif 5 <= bike_count <= 10: return "green"
+    else: return "blue"
 
 # === Simulation Callback ===
 @app.callback(
     [Output('map', 'figure'),
      Output('progress-bar', 'value'),
-     Output('progress-label', 'children')],
+     Output('progress-label', 'children'),
+     Output('missed-trips', 'children')],  
     [Input('interval-component', 'n_intervals'),
      Input('day-selector', 'value')]
 )
@@ -91,6 +98,7 @@ def update_simulation(n, selected_date_str):
     sim_date = datetime.strptime(selected_date_str, "%Y-%m-%d")
     current_sim_time = sim_date + timedelta(seconds=n * SPEED_MULTIPLIER)
 
+    # Stations start with 5 bikes and the simulation starts from midnight of the chosen day
     if n == 0 or selected_date_str not in bike_counts_global:
         bike_counts_global[selected_date_str] = {sid: 5 for sid in station_df['station_id']}
         last_sim_time_global[selected_date_str] = sim_date
@@ -102,13 +110,29 @@ def update_simulation(n, selected_date_str):
         (trip_df['start_time'] >= last_time) &
         (trip_df['start_time'] < current_sim_time)
     ]
+    missed_trips = 0  # initialize missed counter
+    missed_trip_rows = []
 
     for _, trip in new_trips.iterrows():
         start_id = trip['start_station_id']
         end_id = trip['end_station_id']
+        
         if bike_counts.get(start_id, 0) > 0:
             bike_counts[start_id] -= 1
             bike_counts[end_id] = bike_counts.get(end_id, 0) + 1
+        else:
+            missed_trips += 1
+            missed_trip_rows.append({
+                "trip_id": trip['trip_id'],
+                "start_time": trip['start_time'],
+                "end_time": trip['end_time'],
+                "start_station_id": start_id,
+                "end_station_id": end_id,
+                "simulated_day": selected_date_str
+            })
+
+    if missed_trip_rows:
+        pd.DataFrame(missed_trip_rows).to_csv("datasets/missed_trips.csv", mode='a', index=False, header=False)
 
     last_sim_time_global[selected_date_str] = current_sim_time
 
@@ -163,7 +187,8 @@ def update_simulation(n, selected_date_str):
     progress_percent = int(min((n / 300) * 100, 100))
     timer_text = f"Progress: {progress_percent}%"
 
-    return fig, progress_percent, timer_text
+    return fig, progress_percent, timer_text, f"❌ Missed trips: {missed_trips}"
+
 
 # === Run the app ===
 if __name__ == '__main__':
