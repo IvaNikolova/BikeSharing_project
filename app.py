@@ -34,10 +34,10 @@ if not os.path.exists("missed_trips.csv"):
     ]).to_csv("datasets/missed_trips.csv", index=False)
 
 # === Global simulation state ===
-bike_counts_global = {} # dict of current bikes per station {station_id: bike_count}
-last_sim_time_global = {} # to track simulation time for each selected day
-pending_returns_global = {} 
-last_processed_frame_global = {}
+stations_global = {} #  dict of current bikes per station {station_id: bike_count}
+in_transit_bikes_global = {} # bikes currently being used, scheduled to return at end_time
+last_update_time_global = {} # last simulation time processed per date
+last_frame_global = {} # last Dash frame (n) processed per date
 
 # === Dash App ===
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP], suppress_callback_exceptions=True)
@@ -65,54 +65,58 @@ def get_color(bike_count):
 def update_dual_simulation(n):
     results = []
     for selected_date_str in ["2022-05-05", "2022-05-11"]:
-        global bike_counts_global, last_sim_time_global
+        global stations_global, last_update_time_global
 
         # Prevent duplicate interval processing
-        if selected_date_str not in last_processed_frame_global:
-            last_processed_frame_global[selected_date_str] = -1
+        if selected_date_str not in last_frame_global:
+            last_frame_global[selected_date_str] = -1
 
-        if n <= last_processed_frame_global[selected_date_str]:
+        if n <= last_frame_global[selected_date_str]:
             raise dash.exceptions.PreventUpdate
 
-        last_processed_frame_global[selected_date_str] = n
+        last_frame_global[selected_date_str] = n
 
         trip_df = trip_dfs[selected_date_str]
         sim_date = datetime.strptime(selected_date_str, "%Y-%m-%d")
         current_sim_time = sim_date + timedelta(seconds=n * SPEED_MULTIPLIER)
+        progress_percent = int(min((n / 300) * 100, 100))
         
         # Create pending return list if it's the first time
-        if selected_date_str not in pending_returns_global:
-            pending_returns_global[selected_date_str] = []
+        if selected_date_str not in in_transit_bikes_global:
+            in_transit_bikes_global[selected_date_str] = []
 
-        pending_returns = pending_returns_global[selected_date_str]
+        pending_returns = in_transit_bikes_global[selected_date_str]
 
         # Stations start with 5 bikes and the simulation starts from midnight of the chosen day
         if (
-            selected_date_str not in bike_counts_global or
-            selected_date_str not in pending_returns_global or
-            selected_date_str not in last_sim_time_global
+            selected_date_str not in stations_global or
+            selected_date_str not in in_transit_bikes_global or
+            selected_date_str not in last_update_time_global
         ):
             sim_date = datetime.strptime(selected_date_str, "%Y-%m-%d")
-            bike_counts_global[selected_date_str] = {sid: 5 for sid in station_df['station_id']}
-            pending_returns_global[selected_date_str] = []
-            last_sim_time_global[selected_date_str] = sim_date
+            stations_global[selected_date_str] = {int(sid): {"bike_count": 5, "missed_trips": 0, "completed_trips": 0 }for sid in station_df['station_id']}
+            in_transit_bikes_global[selected_date_str] = []
+            last_update_time_global[selected_date_str] = sim_date
 
             if selected_date_str == "2022-05-05":
                 with open("datasets/missed_trips.csv", "w") as f:
                     f.write("")
 
             # Reset bikes and timer
-            bike_counts_global[selected_date_str] = {sid: 7 for sid in station_df['station_id']}
-            last_sim_time_global[selected_date_str] = sim_date
+            stations_global[selected_date_str] = {int(sid): {"bike_count": 5, "missed_trips": 0, "completed_trips": 0 }for sid in station_df['station_id']}
+            last_update_time_global[selected_date_str] = sim_date
 
-        bike_counts = bike_counts_global[selected_date_str]
-        last_time = last_sim_time_global[selected_date_str]
+        bike_counts = stations_global[selected_date_str]
+        last_time = last_update_time_global[selected_date_str]
         
         # Return bikes whose end_time has arrived
         to_return = [trip for trip in pending_returns if trip['end_time'] <= current_sim_time]
         for trip in to_return:
             end_id = trip['end_id']
-            bike_counts[end_id] = bike_counts.get(end_id, 0) + 1
+            if end_id in stations_global[selected_date_str]:
+                stations_global[selected_date_str][end_id]["bike_count"] += 1
+            else:
+                print(f"⚠️ Warning: End station {end_id} not found in stations_global for {selected_date_str}")
             pending_returns.remove(trip)
 
         new_trips = trip_df[
@@ -123,28 +127,31 @@ def update_dual_simulation(n):
         missed_trip_rows = []
 
         for _, trip in new_trips.iterrows():
-            start_id = trip['start_station_id']
-            end_id = trip['end_station_id']
+            start_id = int(trip['start_station_id'])
+            end_id = int(trip['end_station_id'])
             end_time = trip['end_time']
 
             # Trip is being attempted now — only then we check
-            if bike_counts.get(start_id, 0) > 0:
-                # Proceed with trip
-                bike_counts[start_id] -= 1
-                pending_returns.append({
-                    "end_time": end_time,
-                    "end_id": end_id
-                })
+            if start_id in stations_global[selected_date_str]:
+                if stations_global[selected_date_str][start_id]["bike_count"] > 0:
+                    stations_global[selected_date_str][start_id]["bike_count"] -= 1
+                    in_transit_bikes_global[selected_date_str].append({
+                        "end_time": end_time,
+                        "end_id": end_id
+                    })
+                    stations_global[selected_date_str][start_id]["completed_trips"] += 1
+                else:
+                    missed_trip_rows.append({
+                        "trip_id": trip['trip_id'],
+                        "start_time": trip['start_time'],
+                        "end_time": end_time,
+                        "start_station_id": start_id,
+                        "end_station_id": end_id,
+                        "simulated_day": selected_date_str
+                    })
+                    stations_global[selected_date_str][start_id]["missed_trips"] += 1
             else:
-                # Start station has no bikes = missed trip!
-                missed_trip_rows.append({
-                    "trip_id": trip['trip_id'],
-                    "start_time": trip['start_time'],
-                    "end_time": end_time,
-                    "start_station_id": start_id,
-                    "end_station_id": end_id,
-                    "simulated_day": selected_date_str
-                })
+                print(f"⚠️ Skipped trip: Start station {start_id} not found in stations_global for {selected_date_str}")
 
         if missed_trip_rows:
             new_df = pd.DataFrame(missed_trip_rows)
@@ -152,8 +159,23 @@ def update_dual_simulation(n):
             if not new_df.empty:
                 new_df.to_csv("datasets/missed_trips.csv", mode='a', header=not os.path.exists("datasets/missed_trips.csv"), index=False)
 
-        last_sim_time_global[selected_date_str] = current_sim_time
-    
+        last_update_time_global[selected_date_str] = current_sim_time
+        
+        # Export stats once simulation reaches 100%
+        if progress_percent == 100:
+            stats_rows = []
+            for sid, data in stations_global[selected_date_str].items():
+                stats_rows.append({
+                    "station_id": sid,
+                    "completed_trips": data["completed_trips"],
+                    "missed_trips": data["missed_trips"],
+                    "final_bike_count": data["bike_count"],
+                    "simulated_day": selected_date_str
+                })
+
+            pd.DataFrame(stats_rows).to_csv(f"datasets/station_stats_{selected_date_str}.csv", index=False)
+
+            
         # === Create the map figure ===
         latitudes = []
         longitudes = []
@@ -166,7 +188,7 @@ def update_dual_simulation(n):
             lat = row['lat']
             lon = row['lon']
             name = row['station_name']
-            count = bike_counts.get(sid, 0)
+            count = stations_global[selected_date_str][sid]["bike_count"]
             color = get_color(count)
 
             latitudes.append(lat)
@@ -202,7 +224,6 @@ def update_dual_simulation(n):
         results.extend([fig, f"❌ Missed trips: {len(missed_trip_rows)}"])
 
     # Progress bar
-    progress_percent = int(min((n / 300) * 100, 100))
     timer_text = f"Progress: {progress_percent}%"
 
     return (results[0], results[2], progress_percent, timer_text, results[1], results[3], f"Time:  {current_sim_time.strftime('%H:%M')}")

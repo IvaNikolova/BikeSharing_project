@@ -17,13 +17,15 @@ A real-time simulation of bike-sharing activity in Madrid using historical trip 
   - 🟧 Low (1–4 bikes)
   - 🟩 Healthy (5–10 bikes)
   - 🟦 Overstocked (>10 bikes)
-
-**New**
 - Missed trip logging
   - Trips that cannot start due to empty stations are logged in a `missed_trips.csv` file. Each log includes trip ID, start and end times, station IDs, and the simulated day. The app also displays the total number of missed trips in real time.
 - Realistic Trip Handling
   - Bikes are now returned to their destination stations only when the trip ends (based on actual trip duration), rather than immediately when the trip starts. 
 - Top missed stations (where most missed trips occurred)
+
+**New**
+- Station-Level Trip Statistics Tracking
+  - Track and export per-station stats including completed trips, missed trips, and final bike count at simulation end. Save to CSV for analysis.
 
 **TO DO next**
 - Station status indicators: busy, idle, always empty/full
