@@ -1,10 +1,10 @@
 import dash
-from dash import dcc, html
 from dash.dependencies import Input, Output, State
 import dash_bootstrap_components as dbc
 import pandas as pd
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
+from layout import layout
 import warnings
 import os
 
@@ -42,36 +42,7 @@ last_processed_frame_global = {}
 # === Dash App ===
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP], suppress_callback_exceptions=True)
 app.title = "Madrid Bike-Sharing Map Simulation"
-
-app.layout = html.Div([
-    html.H2("🚲 Madrid Bike-Sharing Simulation"),
-    dcc.Interval(id='interval-component', interval=1000, n_intervals=0, max_intervals=300),
-
-    html.Div([
-        html.Div([
-            html.H4("Stations Legend", style={'margin-bottom': '15px'}),
-            html.Div("🟥 Empty (0 bikes) | 🟧 Low (1–4 bikes) | 🟩 Healthy (5–10 bikes) | 🟦 Overstocked (>10 bikes) ", style={'color': 'black', 'fontSize': '16px', 'margin-bottom': '10px'}),
-        ], style={'width': '115%', 'display': 'inline-block', 'padding': '15px 20px', 'borderLeft': '1px solid #ccc'}),
-        html.Div(id='progress-label', style={'margin-bottom': '5px', 'fontSize': '18px'}),
-        dbc.Progress(id='progress-bar', value=0, max=100, striped=True, animated=True, style={'height': '25px', 'margin-bottom': '10px'}),
-    ], style={'margin-bottom': '10px'}),
-
-    html.Div([
-        # Map 1: May 5
-        html.Div([
-            html.H4("🗓️ May 5th, 2022", style={'textAlign': 'center'}),
-            dcc.Graph(id='map_05_05', style={'height': '80vh'}, config={'scrollZoom': True}),
-            html.Div(id='missed-trips-05', style={'fontSize': '16px', 'textAlign': 'center', 'marginTop': '10px'}),
-        ], style={'width': '50%', 'display': 'inline-block'}),
-
-        # Map 2: May 11
-        html.Div([
-            html.H4("🗓️ May 11th, 2022 (Busiest)", style={'textAlign': 'center'}),
-            dcc.Graph(id='map_05_11', style={'height': '80vh'}, config={'scrollZoom': True}),
-            html.Div(id='missed-trips-11', style={'fontSize': '16px', 'textAlign': 'center', 'marginTop': '10px'}),
-        ], style={'width': '50%', 'display': 'inline-block'}),
-    ])
-])
+app.layout = layout
 
 # === Helper functions ===
 def get_color(bike_count):
@@ -87,7 +58,8 @@ def get_color(bike_count):
      Output('progress-bar', 'value'),
      Output('progress-label', 'children'),
      Output('missed-trips-05', 'children'),
-     Output('missed-trips-11', 'children')],
+     Output('missed-trips-11', 'children'),
+     Output('current-time', 'children'),],
     Input('interval-component', 'n_intervals')
 )
 def update_dual_simulation(n):
@@ -115,10 +87,19 @@ def update_dual_simulation(n):
         pending_returns = pending_returns_global[selected_date_str]
 
         # Stations start with 5 bikes and the simulation starts from midnight of the chosen day
-        if n == 0 or selected_date_str not in bike_counts_global:
-            # Reset missed trips CSV
-            with open("datasets/missed_trips.csv", "w") as f:
-                f.write("")  # clears the file
+        if (
+            selected_date_str not in bike_counts_global or
+            selected_date_str not in pending_returns_global or
+            selected_date_str not in last_sim_time_global
+        ):
+            sim_date = datetime.strptime(selected_date_str, "%Y-%m-%d")
+            bike_counts_global[selected_date_str] = {sid: 5 for sid in station_df['station_id']}
+            pending_returns_global[selected_date_str] = []
+            last_sim_time_global[selected_date_str] = sim_date
+
+            if selected_date_str == "2022-05-05":
+                with open("datasets/missed_trips.csv", "w") as f:
+                    f.write("")
 
             # Reset bikes and timer
             bike_counts_global[selected_date_str] = {sid: 7 for sid in station_df['station_id']}
@@ -216,7 +197,6 @@ def update_dual_simulation(n):
                 zoom=12
             ),
             margin=dict(l=0, r=0, t=40, b=0),
-            title=f"Date / Time: {selected_date_str} — {current_sim_time.strftime('%H:%M')}",
             showlegend=False
         )
         results.extend([fig, f"❌ Missed trips: {len(missed_trip_rows)}"])
@@ -225,7 +205,7 @@ def update_dual_simulation(n):
     progress_percent = int(min((n / 300) * 100, 100))
     timer_text = f"Progress: {progress_percent}%"
 
-    return (results[0], results[2], progress_percent, timer_text, results[1], results[3])
+    return (results[0], results[2], progress_percent, timer_text, results[1], results[3], f"Time:  {current_sim_time.strftime('%H:%M')}")
 
 # === Run the app ===
 if __name__ == '__main__':
