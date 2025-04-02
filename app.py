@@ -8,6 +8,11 @@ from layout import layout
 import warnings
 import os
 
+# Append a DataFrame to a CSV, and include the header if the file is missing or empty.
+def append_df_with_header_check(df, path):
+    write_header = not os.path.exists(path) or os.stat(path).st_size == 0
+    df.to_csv(path, mode='a', header=write_header, index=False)
+
 # To ignore the warning about the Scattermap
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -94,7 +99,6 @@ def update_dual_simulation(n):
             selected_date_str not in last_update_time_global
         ):
             sim_date = datetime.strptime(selected_date_str, "%Y-%m-%d")
-            stations_global[selected_date_str] = {int(sid): {"bike_count": 5, "missed_trips": 0, "completed_trips": 0 }for sid in station_df['station_id']}
             in_transit_bikes_global[selected_date_str] = []
             last_update_time_global[selected_date_str] = sim_date
 
@@ -103,7 +107,7 @@ def update_dual_simulation(n):
                     f.write("")
 
             # Reset bikes and timer
-            stations_global[selected_date_str] = {int(sid): {"bike_count": 5, "missed_trips": 0, "completed_trips": 0 }for sid in station_df['station_id']}
+            stations_global[selected_date_str] = {str(sid): {"bike_count": 5, "missed_trips": 0, "completed_trips": 0 }for sid in station_df['station_id']}
             last_update_time_global[selected_date_str] = sim_date
 
         bike_counts = stations_global[selected_date_str]
@@ -127,11 +131,10 @@ def update_dual_simulation(n):
         missed_trip_rows = []
 
         for _, trip in new_trips.iterrows():
-            start_id = int(trip['start_station_id'])
-            end_id = int(trip['end_station_id'])
+            start_id = str(trip['start_station_id'])
+            end_id = str(trip['end_station_id'])
             end_time = trip['end_time']
 
-            # Trip is being attempted now — only then we check
             if start_id in stations_global[selected_date_str]:
                 if stations_global[selected_date_str][start_id]["bike_count"] > 0:
                     stations_global[selected_date_str][start_id]["bike_count"] -= 1
@@ -157,7 +160,7 @@ def update_dual_simulation(n):
             new_df = pd.DataFrame(missed_trip_rows)
 
             if not new_df.empty:
-                new_df.to_csv("datasets/missed_trips.csv", mode='a', header=not os.path.exists("datasets/missed_trips.csv"), index=False)
+                append_df_with_header_check(new_df, "datasets/missed_trips.csv")
 
         last_update_time_global[selected_date_str] = current_sim_time
         
@@ -184,7 +187,7 @@ def update_dual_simulation(n):
         hover_texts = []
 
         for _, row in station_df.iterrows():
-            sid = row['station_id']
+            sid = str(row['station_id'])
             lat = row['lat']
             lon = row['lon']
             name = row['station_name']
