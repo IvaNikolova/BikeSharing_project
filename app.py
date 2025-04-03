@@ -23,8 +23,8 @@ SIM_TOTAL_SECONDS = 24 * 60 * 60  # simulate 24h
 SPEED_MULTIPLIER = SIM_TOTAL_SECONDS / SIM_DURATION_REAL_SECONDS # Every real second = 86400 / 300 = 288 seconds of simulation.
 
 # Thresholds based on May 5th analysis
-BUSY_THRESHOLD = 122.94 + 65.28    # ≈ 188
-UNDERUSED_THRESHOLD = 122.94 - 65.28    # ≈ 58
+BUSY_THRESHOLD = 122.94 + 48.96    # ≈ 188
+UNDERUSED_THRESHOLD = 122.94 - 48.96    # ≈ 58
 
 # === Load data ===
 station_df = pd.read_csv("datasets/all_stations.csv")
