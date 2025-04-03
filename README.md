@@ -28,12 +28,12 @@ The project serves as a base for comparing:
 - Station-Level Trip Statistics Tracking
   
 **New**
-- Station status indicators: busy, idle, always empty/full, balanced
+- Station status indicators: busy, underused, always empty/full, balanced
   
 **TO DO next**
 - Configurable Initial Station Stock
 
-![Simulation Pic](screenshot.png)
+![Simulation Pic](images/simulation.png)
 ---
 ## Dataset
 - `tripdata_2022.csv`: full Madrid dataset for 2022

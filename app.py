@@ -22,6 +22,10 @@ SIM_DURATION_REAL_SECONDS = REAL_DURATION_MINUTES * 60
 SIM_TOTAL_SECONDS = 24 * 60 * 60  # simulate 24h
 SPEED_MULTIPLIER = SIM_TOTAL_SECONDS / SIM_DURATION_REAL_SECONDS # Every real second = 86400 / 300 = 288 seconds of simulation.
 
+# Thresholds based on May 5th analysis
+BUSY_THRESHOLD = 122.94 + 65.28    # ≈ 188
+UNDERUSED_THRESHOLD = 122.94 - 65.28    # ≈ 58
+
 # === Load data ===
 station_df = pd.read_csv("datasets/all_stations.csv")
 station_df['lat'] = pd.to_numeric(station_df['lat'], errors='coerce')
@@ -194,10 +198,10 @@ def update_dual_simulation(n):
                 full_ratio = data["was_full"] / total_frames
                 total_activity = data["activity_count"]
 
-                if total_activity > 50:
+                if total_activity > BUSY_THRESHOLD:
                     status = "busy"
-                elif total_activity <= 2:
-                    status = "idle"
+                elif total_activity < UNDERUSED_THRESHOLD:
+                    status = "underused"
                 elif empty_ratio > 0.25:
                     status = "always_empty"
                 elif full_ratio > 0.25:
