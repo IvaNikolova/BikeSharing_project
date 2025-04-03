@@ -1,13 +1,11 @@
 # Madrid Bike-Sharing Simulation
-
 A real-time simulation of bike-sharing activity in Madrid using historical trip data and live map visualizations. This project displays station activity across a 24-hour period compressed into a 5-minute live simulation using Dash and Plotly.
 
 **More information**
-https://hackmd.io/@AudlaQKrRO-pFcMAxcX4Fg/SJXLaazayl
+- https://hackmd.io/@AudlaQKrRO-pFcMAxcX4Fg/SJXLaazayl
 ---
 
 ## Features
-
 - Live updating map of bike stations in Madrid
 - Simulates historical bike trip data from:
   - **May 5th, 2022**
@@ -19,10 +17,10 @@ https://hackmd.io/@AudlaQKrRO-pFcMAxcX4Fg/SJXLaazayl
 - Realistic Trip Handling
 - Top missed stations (where most missed trips occurred)
 - Station-Level Trip Statistics Tracking
-
+  
 **New**
 - Station status indicators: busy, idle, always empty/full, balanced
-
+  
 **TO DO next**
 - Configurable Initial Station Stock
 
@@ -30,7 +28,6 @@ https://hackmd.io/@AudlaQKrRO-pFcMAxcX4Fg/SJXLaazayl
 ---
 
 ## Goal
-
 The project serves as a base for comparing:
 - **(1) Base Scenario** 
   - Simulates the basic movement of bikes from one station to another. This tests the basic functioning of the system under typical user behavior without external intervention.
@@ -42,7 +39,6 @@ The project serves as a base for comparing:
 ---
 
 ## Dataset
-
 - `tripdata_2022.csv`: full Madrid dataset for 2022
 - `all_stations.csv`: contains all station locations (lat/lon), names, and IDs
 - `all_trips_05_05.csv` & `all_trips_05_11.csv`: real bike trip with:
@@ -52,6 +48,5 @@ The project serves as a base for comparing:
 ---
 
 ## 🚀 Setup Instructions
-
 - make sure you first have `all_stations.csv` , `all_trips_05_05.csv` and `all_trips_05_11.csv` files
 - then run `python app.py`
