@@ -107,7 +107,16 @@ def update_dual_simulation(n):
                     f.write("")
 
             # Reset bikes and timer
-            stations_global[selected_date_str] = {str(sid): {"bike_count": 5, "missed_trips": 0, "completed_trips": 0 }for sid in station_df['station_id']}
+            stations_global[selected_date_str] = {
+                str(sid): {
+                    "bike_count": 5,
+                    "missed_trips": 0,
+                    "completed_trips": 0,
+                    "was_empty": 0,
+                    "was_full": 0,
+                    "activity_count": 0,
+                    "status": None
+                }for sid in station_df['station_id']}
             last_update_time_global[selected_date_str] = sim_date
 
         bike_counts = stations_global[selected_date_str]
@@ -122,6 +131,15 @@ def update_dual_simulation(n):
             else:
                 print(f"⚠️ Warning: End station {end_id} not found in stations_global for {selected_date_str}")
             pending_returns.remove(trip)
+        
+        # Track how often each station is empty or full
+        for sid in stations_global[selected_date_str]:
+            bike_count = stations_global[selected_date_str][sid]["bike_count"]
+            if bike_count == 0:
+                stations_global[selected_date_str][sid]["was_empty"] += 1
+            elif bike_count >= 10:
+                stations_global[selected_date_str][sid]["was_full"] += 1
+
 
         new_trips = trip_df[
             (trip_df['start_time'] >= last_time) &
@@ -143,6 +161,8 @@ def update_dual_simulation(n):
                         "end_id": end_id
                     })
                     stations_global[selected_date_str][start_id]["completed_trips"] += 1
+                    stations_global[selected_date_str][start_id]["activity_count"] += 1
+
                 else:
                     missed_trip_rows.append({
                         "trip_id": trip['trip_id'],
@@ -153,6 +173,7 @@ def update_dual_simulation(n):
                         "simulated_day": selected_date_str
                     })
                     stations_global[selected_date_str][start_id]["missed_trips"] += 1
+                    stations_global[selected_date_str][start_id]["activity_count"] += 1
             else:
                 print(f"⚠️ Skipped trip: Start station {start_id} not found in stations_global for {selected_date_str}")
 
@@ -166,6 +187,27 @@ def update_dual_simulation(n):
         
         # Export stats once simulation reaches 100%
         if progress_percent == 100:
+            # Evaluate and assign status
+            for sid, data in stations_global[selected_date_str].items():
+                total_frames = 300  # or use n if dynamic
+                empty_ratio = data["was_empty"] / total_frames
+                full_ratio = data["was_full"] / total_frames
+                total_activity = data["activity_count"]
+
+                if total_activity > 50:
+                    status = "busy"
+                elif total_activity <= 2:
+                    status = "idle"
+                elif empty_ratio > 0.25:
+                    status = "always_empty"
+                elif full_ratio > 0.25:
+                    status = "always_full"
+                else:
+                    status = "balanced"
+
+                data["status"] = status
+                
+            # Prepare CSV export    
             stats_rows = []
             for sid, data in stations_global[selected_date_str].items():
                 stats_rows.append({
@@ -173,11 +215,12 @@ def update_dual_simulation(n):
                     "completed_trips": data["completed_trips"],
                     "missed_trips": data["missed_trips"],
                     "final_bike_count": data["bike_count"],
-                    "simulated_day": selected_date_str
+                    "simulated_day": selected_date_str,
+                    "status": data["status"]
                 })
 
             pd.DataFrame(stats_rows).to_csv(f"datasets/station_stats_{selected_date_str}.csv", index=False)
-
+        
             
         # === Create the map figure ===
         latitudes = []
@@ -198,7 +241,14 @@ def update_dual_simulation(n):
             longitudes.append(lon)
             colors.append(color)
             sizes.append(10 + count)  # make size reflect bike count
-            hover_texts.append(f"{name}<br>Bikes: {count}")
+            # Only show status in tooltip if simulation is complete
+            if progress_percent == 100:
+                status_line = f"<br>Status: {stations_global[selected_date_str][sid]['status']}"
+            else:
+                status_line = ""
+
+            hover_texts.append(f"{name}<br><br>Bikes: {count}{status_line}")
+
 
         fig = go.Figure()
 

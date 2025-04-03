@@ -2,6 +2,8 @@
 
 A real-time simulation of bike-sharing activity in Madrid using historical trip data and live map visualizations. This project displays station activity across a 24-hour period compressed into a 5-minute live simulation using Dash and Plotly.
 
+**More information**
+https://hackmd.io/@AudlaQKrRO-pFcMAxcX4Fg/SJXLaazayl
 ---
 
 ## Features
@@ -13,24 +15,16 @@ A real-time simulation of bike-sharing activity in Madrid using historical trip 
 - Time-compressed simulation (24h → 5 min)
 - Interactive progress bar and hover tooltips
 - Color-coded station markers based on real-time availability
-  - 🟥 Empty (0 bikes)
-  - 🟧 Low (1–4 bikes)
-  - 🟩 Healthy (5–10 bikes)
-  - 🟦 Overstocked (>10 bikes)
 - Missed trip logging
-  - Trips that cannot start due to empty stations are logged in a `missed_trips.csv` file. Each log includes trip ID, start and end times, station IDs, and the simulated day. The app also displays the total number of missed trips in real time.
 - Realistic Trip Handling
-  - Bikes are now returned to their destination stations only when the trip ends (based on actual trip duration), rather than immediately when the trip starts. 
 - Top missed stations (where most missed trips occurred)
+- Station-Level Trip Statistics Tracking
 
 **New**
-- Station-Level Trip Statistics Tracking
-  - Track and export per-station stats including completed trips, missed trips, and final bike count at simulation end. Save to CSV for analysis.
+- Station status indicators: busy, idle, always empty/full, balanced
 
 **TO DO next**
-- Station status indicators: busy, idle, always empty/full
 - Configurable Initial Station Stock
-  - The number of bikes per station at simulation start can be adjusted to test different system load conditions and see how they affect missed trip rates and station overload.
 
 ![Simulation Pic](screenshot.png)
 ---
