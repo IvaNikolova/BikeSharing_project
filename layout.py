@@ -37,6 +37,7 @@ layout = html.Div([
                 'color': 'crimson',
                 'marginBottom': '6px'
             }),
+            html.Div(id='summary-left', style={'textAlign': 'center', 'marginTop': '10px', 'fontSize': '15px'}),
             dcc.Graph(id='map_05_05', style={
                 'height': '75vh',
                 'border': '1px solid #ccc',
@@ -53,6 +54,7 @@ layout = html.Div([
                 'color': 'crimson',
                 'marginBottom': '6px'
             }),
+            html.Div(id='summary-right', style={'textAlign': 'center', 'marginTop': '10px', 'fontSize': '15px'}),
             dcc.Graph(id='map_05_11', style={
                 'height': '75vh',
                 'border': '1px solid #ccc',
@@ -97,7 +99,7 @@ layout = html.Div([
                 "backgroundColor": "green",
                 "marginRight": "8px"
             }),
-            html.Span("Healthy (16–35)")
+            html.Span("Healthy (16–30)")
         ], style={"marginBottom": "6px"}),
 
         html.Div([

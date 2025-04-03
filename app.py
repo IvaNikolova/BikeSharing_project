@@ -68,10 +68,14 @@ def get_color(bike_count):
      Output('progress-label', 'children'),
      Output('missed-trips-05', 'children'),
      Output('missed-trips-11', 'children'),
-     Output('current-time', 'children'),],
+     Output('current-time', 'children'),
+     Output('summary-left', 'children'),
+     Output('summary-right', 'children'),],
     Input('interval-component', 'n_intervals')
 )
 def update_dual_simulation(n):
+    summary_left_text = ""
+    summary_right_text = ""
     results = []
     for selected_date_str in ["2022-05-05", "2022-05-11"]:
         global stations_global, last_update_time_global
@@ -89,7 +93,7 @@ def update_dual_simulation(n):
         sim_date = datetime.strptime(selected_date_str, "%Y-%m-%d")
         current_sim_time = sim_date + timedelta(seconds=n * SPEED_MULTIPLIER)
         progress_percent = int(min((n / 300) * 100, 100))
-        
+
         # Create pending return list if it's the first time
         if selected_date_str not in in_transit_bikes_global:
             in_transit_bikes_global[selected_date_str] = []
@@ -210,6 +214,7 @@ def update_dual_simulation(n):
                     status = "balanced"
 
                 data["status"] = status
+               
                 
             # Prepare CSV export    
             stats_rows = []
@@ -222,9 +227,22 @@ def update_dual_simulation(n):
                     "simulated_day": selected_date_str,
                     "status": data["status"]
                 })
-
             pd.DataFrame(stats_rows).to_csv(f"datasets/station_stats_{selected_date_str}.csv", index=False)
-        
+            
+            # Calculate stats for summary text
+            # ✅ First: Calculate stats
+            total_completed = sum(data["completed_trips"] for data in stations_global[selected_date_str].values())
+            total_missed = sum(data["missed_trips"] for data in stations_global[selected_date_str].values())
+            total_bikes = sum(data["bike_count"] for data in stations_global[selected_date_str].values())
+
+            # ✅ Then: Compose the summary text
+            summary_text = f"""✅ Total completed trips: {total_completed} | ❌ Total missed trips: {total_missed} | 🚲 Total bikes remaining: {total_bikes}"""
+
+            # ✅ Finally: Assign it to left or right
+            if selected_date_str == "2022-05-05":
+                summary_left_text = summary_text
+            else:
+                summary_right_text = summary_text
             
         # === Create the map figure ===
         latitudes = []
@@ -283,7 +301,7 @@ def update_dual_simulation(n):
     # Progress bar
     timer_text = f"Progress: {progress_percent}%"
 
-    return (results[0], results[2], progress_percent, timer_text, results[1], results[3], f"Time:  {current_sim_time.strftime('%H:%M')}")
+    return (results[0], results[2], progress_percent, timer_text, results[1], results[3], f"Time:  {current_sim_time.strftime('%H:%M')}", summary_left_text, summary_right_text )
 
 # === Run the app ===
 if __name__ == '__main__':
