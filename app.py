@@ -56,8 +56,8 @@ app.layout = layout
 # === Helper functions ===
 def get_color(bike_count):
     if bike_count == 0: return "red"
-    elif bike_count < 5: return "orange"
-    elif 5 <= bike_count <= 10: return "green"
+    elif bike_count <= 15: return "orange"
+    elif 15 < bike_count <= 30: return "green"
     else: return "blue"
 
 # === Simulation Callback ===
@@ -113,7 +113,7 @@ def update_dual_simulation(n):
             # Reset bikes and timer
             stations_global[selected_date_str] = {
                 str(sid): {
-                    "bike_count": 5,
+                    "bike_count": 30,
                     "missed_trips": 0,
                     "completed_trips": 0,
                     "was_empty": 0,
@@ -244,7 +244,7 @@ def update_dual_simulation(n):
             latitudes.append(lat)
             longitudes.append(lon)
             colors.append(color)
-            sizes.append(10 + count)  # make size reflect bike count
+            sizes.append(min(5 + 0.5 * count, 15))
             # Only show status in tooltip if simulation is complete
             if progress_percent == 100:
                 status_line = f"<br>Status: {stations_global[selected_date_str][sid]['status']}"

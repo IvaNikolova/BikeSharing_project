@@ -62,11 +62,56 @@ layout = html.Div([
 
         # Right: Legend with a title
         html.Div([
-            html.H4("Legend", style={'marginBottom': '12px'}),
-            html.Div("🟥 Empty", style={'fontSize': '15px', 'marginBottom': '4px'}),
-            html.Div("🟧 Low (1–4)", style={'fontSize': '15px', 'marginBottom': '4px'}),
-            html.Div("🟩 Healthy (5–10)", style={'fontSize': '15px', 'marginBottom': '4px'}),
-            html.Div("🟦 Overstocked", style={'fontSize': '15px', 'marginBottom': '4px'})
+            html.H5("Legend", style={"margin-bottom": "10px"}),
+    html.Div([
+        html.Div([
+            html.Span(style={
+                "display": "inline-block",
+                "width": "12px",
+                "height": "12px",
+                "borderRadius": "50%",
+                "backgroundColor": "red",
+                "marginRight": "8px"
+            }),
+            html.Span("Empty")
+        ], style={"marginBottom": "6px"}),
+
+        html.Div([
+            html.Span(style={
+                "display": "inline-block",
+                "width": "12px",
+                "height": "12px",
+                "borderRadius": "50%",
+                "backgroundColor": "orange",
+                "marginRight": "8px"
+            }),
+            html.Span("Low (1–15)")
+        ], style={"marginBottom": "6px"}),
+
+        html.Div([
+            html.Span(style={
+                "display": "inline-block",
+                "width": "12px",
+                "height": "12px",
+                "borderRadius": "50%",
+                "backgroundColor": "green",
+                "marginRight": "8px"
+            }),
+            html.Span("Healthy (16–35)")
+        ], style={"marginBottom": "6px"}),
+
+        html.Div([
+            html.Span(style={
+                "display": "inline-block",
+                "width": "12px",
+                "height": "12px",
+                "borderRadius": "50%",
+                "backgroundColor": "blue",
+                "marginRight": "8px"
+            }),
+            html.Span("Overstocked")
+        ], style={"marginBottom": "6px"}),
+    ])
         ], style={
             'width': '10%',
             'display': 'inline-block',
