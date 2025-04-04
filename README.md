@@ -29,9 +29,14 @@ The project serves as a base for comparing:
   
 **New**
 - Station status indicators: busy, underused, always empty/full, balanced
-  
-**TO DO next**
 - Configurable Initial Station Stock
+
+**TO DO next**
+- Incoming + Outgoing Trip Counts per Station
+- Start Implementing the Demand-Based Redistribution scenario
+  - Define What Each Agent Will Do
+  - Define the Evaluation Metrics
+  - Set Up a Logic for Off-Peak Hours
 
 ![Simulation Pic](images/simulation.png)
 ---
@@ -42,6 +47,6 @@ The project serves as a base for comparing:
   - `start_time`, `end_time`
   - `start_station_id`, `end_station_id`
 ---
-## 🚀 Setup Instructions
+## Setup Instructions
 - make sure you first have `all_stations.csv` , `all_trips_05_05.csv` and `all_trips_05_11.csv` files
 - then run `python app.py`
