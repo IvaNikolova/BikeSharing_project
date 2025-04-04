@@ -26,13 +26,13 @@ The project serves as a base for comparing:
 - Realistic Trip Handling
 - Top missed stations (where most missed trips occurred)
 - Station-Level Trip Statistics Tracking
-  
-**New**
 - Station status indicators: busy, underused, always empty/full, balanced
 - Configurable Initial Station Stock
 
-**TO DO next**
+**New**
 - Incoming + Outgoing Trip Counts per Station
+
+**TO DO next**
 - Start Implementing the Demand-Based Redistribution scenario
   - Define What Each Agent Will Do
   - Define the Evaluation Metrics

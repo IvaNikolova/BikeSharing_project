@@ -37,6 +37,12 @@ trip_dfs = {
     "2022-05-11": pd.read_csv("datasets/all_trips_05_11.csv", parse_dates=["start_time", "end_time"]),
 }
 
+station_stats = {
+    "2022-05-05": pd.read_csv("datasets/station_stats_2022-05-05.csv"),
+    "2022-05-11": pd.read_csv("datasets/station_stats_2022-05-11.csv")
+}
+
+
 if not os.path.exists("missed_trips.csv"):
     pd.DataFrame(columns=[
         "trip_id", "start_time", "end_time", "start_station_id", "end_station_id", "simulated_day"
@@ -219,13 +225,25 @@ def update_dual_simulation(n):
             # Prepare CSV export    
             stats_rows = []
             for sid, data in stations_global[selected_date_str].items():
+                # Get total outgoing/incoming from precomputed stats
+                stat_row = station_stats[selected_date_str]
+                stat_row = stat_row[stat_row["station_id"] == sid]
+                if not stat_row.empty:
+                    outgoing = int(stat_row["total_outgoing"].values[0])
+                    incoming = int(stat_row["total_incoming"].values[0])
+                else:
+                    outgoing = 0
+                    incoming = 0
+
                 stats_rows.append({
                     "station_id": sid,
                     "completed_trips": data["completed_trips"],
                     "missed_trips": data["missed_trips"],
                     "final_bike_count": data["bike_count"],
                     "simulated_day": selected_date_str,
-                    "status": data["status"]
+                    "status": data["status"],
+                    "total_outgoing": outgoing,
+                    "total_incoming": incoming
                 })
             pd.DataFrame(stats_rows).to_csv(f"datasets/station_stats_{selected_date_str}.csv", index=False)
             
@@ -264,13 +282,27 @@ def update_dual_simulation(n):
             colors.append(color)
             sizes.append(min(5 + 0.5 * count, 15))
             # Only show status in tooltip if simulation is complete
+            status = stations_global[selected_date_str][sid]["status"]
+    
             if progress_percent == 100:
-                status_line = f"<br>Status: {stations_global[selected_date_str][sid]['status']}"
+                status = stations_global[selected_date_str][sid]["status"]
+                
+                # Lookup trip info for this station
+                stats_row = station_stats[selected_date_str]
+                stats_row = stats_row[stats_row["station_id"] == sid]
+                if not stats_row.empty:
+                    outgoing = int(stats_row["total_outgoing"].values[0])
+                    incoming = int(stats_row["total_incoming"].values[0])
+                    trips_line = f"<br>Total Outgoing: {outgoing}<br>Total Incoming: {incoming}"
+                else:
+                    trips_line = ""
+
+                status_line = f"<br>Status: {status}"
             else:
                 status_line = ""
+                trips_line = ""
 
-            hover_texts.append(f"{name}<br><br>Bikes: {count}{status_line}")
-
+            hover_texts.append(f"{name}<br><br>Bikes: {count}{status_line}{trips_line}")
 
         fig = go.Figure()
 
