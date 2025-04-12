@@ -157,7 +157,7 @@ def update_dual_simulation(n):
             bike_count = stations_global[selected_date_str][sid]["bike_count"]
             if bike_count == 0:
                 stations_global[selected_date_str][sid]["was_empty"] += 1
-            elif bike_count >= 10:
+            elif bike_count >= 27:
                 stations_global[selected_date_str][sid]["was_full"] += 1
 
 

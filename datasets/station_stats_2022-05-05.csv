@@ -47,9 +47,9 @@ station_id,completed_trips,missed_trips,final_bike_count,simulated_day,status,to
 50,57,0,34,2022-05-05,underused,57,61
 51,73,0,31,2022-05-05,underused,73,74
 52,59,0,34,2022-05-05,underused,59,63
-53,155,0,19,2022-05-05,always_full,155,144
+53,155,0,19,2022-05-05,balanced,155,144
 54,105,0,33,2022-05-05,always_full,105,108
-59,149,0,30,2022-05-05,always_full,149,149
+59,149,0,30,2022-05-05,balanced,149,149
 56,20,0,30,2022-05-05,underused,20,20
 57,27,0,30,2022-05-05,underused,27,27
 58,84,0,40,2022-05-05,always_full,84,94
@@ -61,7 +61,7 @@ station_id,completed_trips,missed_trips,final_bike_count,simulated_day,status,to
 67,53,0,26,2022-05-05,underused,53,49
 68,38,0,28,2022-05-05,underused,38,36
 69,70,0,31,2022-05-05,underused,70,71
-70,78,0,16,2022-05-05,always_full,78,64
+70,78,0,16,2022-05-05,balanced,78,64
 71,63,0,24,2022-05-05,underused,63,57
 72,71,0,33,2022-05-05,underused,71,74
 73,90,0,9,2022-05-05,always_full,90,69
@@ -148,7 +148,7 @@ station_id,completed_trips,missed_trips,final_bike_count,simulated_day,status,to
 166,95,0,25,2022-05-05,always_full,95,90
 142,47,0,33,2022-05-05,underused,47,50
 127,73,0,35,2022-05-05,underused,73,79
-124,100,0,35,2022-05-05,always_full,100,105
+124,100,0,35,2022-05-05,balanced,100,105
 145,46,0,26,2022-05-05,underused,46,42
 160,63,0,32,2022-05-05,underused,63,65
 173,79,0,45,2022-05-05,always_full,79,94
