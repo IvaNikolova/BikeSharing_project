@@ -5,6 +5,7 @@ import pandas as pd
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
 from layout import layout
+from marl_simulation import run_marl_simulation_step
 import warnings
 import os
 
@@ -53,6 +54,11 @@ stations_global = {} #  dict of current bikes per station {station_id: bike_coun
 in_transit_bikes_global = {} # bikes currently being used, scheduled to return at end_time
 last_update_time_global = {} # last simulation time processed per date
 last_frame_global = {} # last Dash frame (n) processed per date
+
+stations_marl_global = {}
+in_transit_marl_global = {}
+last_update_marl_global = {}
+last_frame_marl_frame = {}
 
 # === Dash App ===
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP], suppress_callback_exceptions=True)
@@ -334,6 +340,18 @@ def update_dual_simulation(n):
     timer_text = f"Progress: {progress_percent}%"
 
     return (results[0], results[2], progress_percent, timer_text, results[1], results[3], f"Time:  {current_sim_time.strftime('%H:%M')}", summary_left_text, summary_right_text )
+
+@app.callback(
+    [Output('map_marl_05_05', 'figure'),
+     Output('map_marl_05_11', 'figure'),
+     Output('missed-trips-marl-05', 'children'),
+     Output('missed-trips-marl-11', 'children'),
+     Output('summary-marl-left', 'children'),
+     Output('summary-marl-right', 'children')],
+    Input('interval-component', 'n_intervals')
+)
+def update_marl_simulation(n):
+    return run_marl_simulation_step(n, stations_marl_global, in_transit_marl_global, last_update_marl_global, last_frame_marl_frame)
 
 # === Run the app ===
 if __name__ == '__main__':
