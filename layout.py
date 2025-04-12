@@ -117,7 +117,7 @@ layout = html.Div([
 
             html.Div([
                 html.H4("🗓️ May 11th, 2022 (MARL)", style={'textAlign': 'center'}),
-                html.Div(id='missed-trips-marl-11', style={'fontSize': '16px', 'textAlign': 'center', 'marginTop': '10px'}),
+                html.Div(id='missed-trips-marl-11', style={'textAlign': 'center', 'fontSize': '15px', 'color': 'crimson', 'marginBottom': '6px'}),
                 html.Div(id='summary-marl-right', style={'fontSize': '14px', 'textAlign': 'center', 'marginTop': '10px'}),
                 dcc.Graph(id='map_marl_05_11', style={'height': '75vh', 'padding': '5px', 'border': '1px solid #ccc'}, config={'scrollZoom': True}),
             ], style={'width': '45%', 'display': 'inline-block', 'paddingRight': '5px'}),

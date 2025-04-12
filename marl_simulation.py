@@ -4,6 +4,20 @@ from datetime import datetime, timedelta
 from marl_demand_utils import load_historical_demand
 from marl_demand_utils import choose_action  
 
+import os
+import csv
+
+# Ensure missed trips file exists with headers
+missed_path = "datasets/missed_trips_marl.csv"
+if not os.path.exists(missed_path):
+    with open(missed_path, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow([
+            "trip_id", "start_time", "end_time",
+            "start_station_id", "end_station_id", "simulated_day"
+        ])
+
+
 station_df = pd.read_csv("datasets/all_stations.csv")
 trip_dfs = {
     "2022-05-05": pd.read_csv("datasets/all_trips_05_05.csv", parse_dates=["start_time", "end_time"]),
@@ -119,8 +133,23 @@ def run_marl_simulation_step(n, stations_marl_global, in_transit_marl_global, la
                     "end_time": row["end_time"],
                     "end_id": end_id
                 })
+                stations[start_id]["completed_trips"] += 1
             else:
+                # Missed trip handling
+                stations[start_id]["missed_trips"] += 1
                 missed += 1
+
+                # 💾 Save this missed trip to CSV
+                with open(missed_path, "a", newline="") as f:
+                    writer = csv.writer(f)
+                    writer.writerow([
+                        row["trip_id"],
+                        row["start_time"],
+                        row["end_time"],
+                        start_id,
+                        end_id,
+                        selected_date
+                    ])
                 
         # Build Observation for each agent
         total_frames = n + 1
@@ -205,7 +234,7 @@ def run_marl_simulation_step(n, stations_marl_global, in_transit_marl_global, la
             ""
         ])
         
-        if n == 299:  # Only print when simulation ends
+        if n == 300:  # Only print when simulation ends
             print(f"\n Simulation Summary for {selected_date}:")
 
             # === 1. Empty / Full Count Debug ===
@@ -228,6 +257,19 @@ def run_marl_simulation_step(n, stations_marl_global, in_transit_marl_global, la
             print(f"\n🔄 Bike Movements for {selected_date} (first 5 stations):")
             for sid, data in list(stations.items())[:5]:
                 print(f"  {sid}: Sent → {data['sent_bikes']} | Received → {data['received_bikes']}")
+
+            # Summary text for Dash
+            total_completed = sum(data["completed_trips"] for data in stations.values())
+            total_missed = sum(data["missed_trips"] for data in stations.values())
+            total_bikes = sum(data["bike_count"] for data in stations.values())
+
+            summary_text = f"""✅ Total completed trips: {total_completed} | ❌ Total missed trips: {total_missed} | 🚲 Total bikes remaining: {total_bikes}"""
+
+            # Store into results[2] and results[5]
+            if selected_date == "2022-05-05":
+                results[2] = summary_text
+            else:
+                results[5] = summary_text
 
 
 
