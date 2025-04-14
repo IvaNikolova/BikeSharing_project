@@ -139,7 +139,7 @@ def run_marl_simulation_step(n, stations_marl_global, in_transit_marl_global, la
                 stations[start_id]["missed_trips"] += 1
                 missed += 1
 
-                # 💾 Save this missed trip to CSV
+                # Save this missed trip to CSV
                 with open(missed_path, "a", newline="") as f:
                     writer = csv.writer(f)
                     writer.writerow([
@@ -204,7 +204,7 @@ def run_marl_simulation_step(n, stations_marl_global, in_transit_marl_global, la
             lats.append(lat)
             lons.append(lon)
             colors.append(get_color(count))
-            sizes.append(min(5 + 0.5 * count, 15))
+            sizes.append(min(9 + 0.5 * count, 15))
             sent = stations.get(sid, {}).get("sent_bikes", 0)
             received = stations.get(sid, {}).get("received_bikes", 0)
             hovers.append(f"{name}<br>Bikes: {count}<br>Sent: {sent}<br>Received: {received}")

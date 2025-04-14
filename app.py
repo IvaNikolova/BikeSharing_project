@@ -1,5 +1,5 @@
 import dash
-from dash.dependencies import Input, Output, State
+from dash.dependencies import Input, Output
 import dash_bootstrap_components as dbc
 import pandas as pd
 import plotly.graph_objects as go
@@ -9,13 +9,13 @@ from marl_simulation import run_marl_simulation_step
 import warnings
 import os
 
+# To ignore the warning about the Scattermap
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+
 # Append a DataFrame to a CSV, and include the header if the file is missing or empty.
 def append_df_with_header_check(df, path):
     write_header = not os.path.exists(path) or os.stat(path).st_size == 0
     df.to_csv(path, mode='a', header=write_header, index=False)
-
-# To ignore the warning about the Scattermap
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 # === Simulation Settings ===
 REAL_DURATION_MINUTES = 5
@@ -43,6 +43,10 @@ station_stats = {
     "2022-05-11": pd.read_csv("datasets/station_stats_2022-05-11.csv")
 }
 
+# === Dash App ===
+app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP], suppress_callback_exceptions=True)
+app.title = "Madrid Bike-Sharing Map Simulation"
+app.layout = layout
 
 if not os.path.exists("missed_trips.csv"):
     pd.DataFrame(columns=[
@@ -59,11 +63,6 @@ stations_marl_global = {}
 in_transit_marl_global = {}
 last_update_marl_global = {}
 last_frame_marl_frame = {}
-
-# === Dash App ===
-app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP], suppress_callback_exceptions=True)
-app.title = "Madrid Bike-Sharing Map Simulation"
-app.layout = layout
 
 # === Helper functions ===
 def get_color(bike_count):
@@ -130,12 +129,14 @@ def update_dual_simulation(n):
             stations_global[selected_date_str] = {
                 str(sid): {
                     "bike_count": 30,
-                    "missed_trips": 0,
+                    "final_missed_trips": 0,
                     "completed_trips": 0,
                     "was_empty": 0,
                     "was_full": 0,
                     "activity_count": 0,
-                    "status": None
+                    "status": None,
+                    "has_missed": False,
+                    "just_missed": False
                 }for sid in station_df['station_id']}
             last_update_time_global[selected_date_str] = sim_date
 
@@ -167,6 +168,9 @@ def update_dual_simulation(n):
         ]
         
         missed_trip_rows = []
+        for sid in stations_global[selected_date_str]:
+            stations_global[selected_date_str][sid]["just_missed"] = False
+
 
         for _, trip in new_trips.iterrows():
             start_id = str(trip['start_station_id'])
@@ -192,7 +196,9 @@ def update_dual_simulation(n):
                         "end_station_id": end_id,
                         "simulated_day": selected_date_str
                     })
-                    stations_global[selected_date_str][start_id]["missed_trips"] += 1
+                    stations_global[selected_date_str][start_id]["final_missed_trips"] += 1
+                    stations_global[selected_date_str][start_id]["has_missed"] = True
+                    stations_global[selected_date_str][start_id]["just_missed"] = True  
                     stations_global[selected_date_str][start_id]["activity_count"] += 1
             else:
                 print(f"⚠️ Skipped trip: Start station {start_id} not found in stations_global for {selected_date_str}")
@@ -244,7 +250,7 @@ def update_dual_simulation(n):
                 stats_rows.append({
                     "station_id": sid,
                     "completed_trips": data["completed_trips"],
-                    "missed_trips": data["missed_trips"],
+                    "final_missed_trips": data["final_missed_trips"],
                     "final_bike_count": data["bike_count"],
                     "simulated_day": selected_date_str,
                     "status": data["status"],
@@ -253,16 +259,12 @@ def update_dual_simulation(n):
                 })
             pd.DataFrame(stats_rows).to_csv(f"datasets/station_stats_{selected_date_str}.csv", index=False)
             
-            # Calculate stats for summary text
-            # ✅ First: Calculate stats
             total_completed = sum(data["completed_trips"] for data in stations_global[selected_date_str].values())
-            total_missed = sum(data["missed_trips"] for data in stations_global[selected_date_str].values())
+            total_missed = sum(data["final_missed_trips"] for data in stations_global[selected_date_str].values())
             total_bikes = sum(data["bike_count"] for data in stations_global[selected_date_str].values())
 
-            # ✅ Then: Compose the summary text
             summary_text = f"""✅ Total completed trips: {total_completed} | ❌ Total missed trips: {total_missed} | 🚲 Total bikes remaining: {total_bikes}"""
 
-            # ✅ Finally: Assign it to left or right
             if selected_date_str == "2022-05-05":
                 summary_left_text = summary_text
             else:
@@ -274,6 +276,7 @@ def update_dual_simulation(n):
         colors = []
         sizes = []
         hover_texts = []
+        missed_flags = [stations_global[selected_date_str][str(row["station_id"])]["just_missed"] for _, row in station_df.iterrows()]
 
         for _, row in station_df.iterrows():
             sid = str(row['station_id'])
@@ -286,7 +289,7 @@ def update_dual_simulation(n):
             latitudes.append(lat)
             longitudes.append(lon)
             colors.append(color)
-            sizes.append(min(5 + 0.5 * count, 15))
+            sizes.append(min(9 + 0.5 * count, 15))
             # Only show status in tooltip if simulation is complete
             status = stations_global[selected_date_str][sid]["status"]
     
@@ -304,22 +307,45 @@ def update_dual_simulation(n):
                     trips_line = ""
 
                 status_line = f"<br>Status: {status}"
+                missed_line = f"<br>Missed Trips: {stations_global[selected_date_str][sid]['final_missed_trips']}"
+
             else:
                 status_line = ""
                 trips_line = ""
+                missed_line = ""
 
-            hover_texts.append(f"{name}<br><br>Bikes: {count}{status_line}{trips_line}")
+
+            hover_texts.append(f"{name}<br><br>Bikes: {count}{status_line}{trips_line}{missed_line}")
 
         fig = go.Figure()
 
+        # Red halo trace (for missed trips)
+        fig.add_trace(go.Scattermapbox(
+            lat=[latitudes[i] for i in range(len(latitudes)) if missed_flags[i]],
+            lon=[longitudes[i] for i in range(len(longitudes)) if missed_flags[i]],
+            mode="markers",
+            marker=go.scattermapbox.Marker(
+                size=[sizes[i] + 5 for i in range(len(sizes)) if missed_flags[i]],
+                color="black",
+                opacity=1,
+            ),
+            hoverinfo='skip',
+            showlegend=False
+        ))
+
+        # Actual station trace
         fig.add_trace(go.Scattermapbox(
             lat=latitudes,
             lon=longitudes,
-            mode='markers',
-            marker=go.scattermapbox.Marker(size=sizes, color=colors, opacity=0.8),
+            mode="markers",
+            marker=go.scattermapbox.Marker(
+                size=sizes,
+                color=colors,
+                opacity=0.9
+            ),
             text=hover_texts,
             hoverinfo='text',
-            name='Stations'
+            name="Stations"
         ))
 
         fig.update_layout(
