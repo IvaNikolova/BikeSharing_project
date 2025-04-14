@@ -207,7 +207,7 @@ def run_marl_simulation_step(n, stations_marl_global, in_transit_marl_global, la
             sizes.append(min(9 + 0.5 * count, 15))
             sent = stations.get(sid, {}).get("sent_bikes", 0)
             received = stations.get(sid, {}).get("received_bikes", 0)
-            hovers.append(f"{name}<br>Bikes: {count}<br>Sent: {sent}<br>Received: {received}")
+            hovers.append(f"{name}<br><br>Bikes: {count}<br>Sent / Received: {sent} / {received}")
 
 
         fig = go.Figure()

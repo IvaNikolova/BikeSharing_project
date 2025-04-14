@@ -136,7 +136,8 @@ def update_dual_simulation(n):
                     "activity_count": 0,
                     "status": None,
                     "has_missed": False,
-                    "just_missed": False
+                    "just_missed": False,
+                    "healthy_time": 0
                 }for sid in station_df['station_id']}
             last_update_time_global[selected_date_str] = sim_date
 
@@ -161,6 +162,9 @@ def update_dual_simulation(n):
             elif bike_count >= 27:
                 stations_global[selected_date_str][sid]["was_full"] += 1
 
+            #  Count healthy frames (new)
+            if 16 <= bike_count <= 30:
+                stations_global[selected_date_str][sid]["healthy_time"] += 1
 
         new_trips = trip_df[
             (trip_df['start_time'] >= last_time) &
@@ -246,6 +250,9 @@ def update_dual_simulation(n):
                 else:
                     outgoing = 0
                     incoming = 0
+                
+                healthy_frames = data.get("healthy_time", 0)
+                healthy_percentage = round(healthy_frames / total_frames * 100)
 
                 stats_rows.append({
                     "station_id": sid,
@@ -255,7 +262,8 @@ def update_dual_simulation(n):
                     "simulated_day": selected_date_str,
                     "status": data["status"],
                     "total_outgoing": outgoing,
-                    "total_incoming": incoming
+                    "total_incoming": incoming,
+                    "healthy_percentage": healthy_percentage
                 })
             pd.DataFrame(stats_rows).to_csv(f"datasets/station_stats_{selected_date_str}.csv", index=False)
             
@@ -302,20 +310,22 @@ def update_dual_simulation(n):
                 if not stats_row.empty:
                     outgoing = int(stats_row["total_outgoing"].values[0])
                     incoming = int(stats_row["total_incoming"].values[0])
-                    trips_line = f"<br>Total Outgoing: {outgoing}<br>Total Incoming: {incoming}"
+                    trips_line = f"<br>Total Outgoing / Incoming: {outgoing} / {incoming}"
                 else:
                     trips_line = ""
 
                 status_line = f"<br>Status: {status}"
                 missed_line = f"<br>Missed Trips: {stations_global[selected_date_str][sid]['final_missed_trips']}"
-
+                healthy_frames = stations_global[selected_date_str][sid].get("healthy_time", 0)
+                healthy_percentage = round(healthy_frames / total_frames * 100)
+                healthy_line = f"<br>Healthy Time: {healthy_percentage}%"
             else:
                 status_line = ""
                 trips_line = ""
                 missed_line = ""
+                healthy_line = ""
 
-
-            hover_texts.append(f"{name}<br><br>Bikes: {count}{status_line}{trips_line}{missed_line}")
+            hover_texts.append(f"{name}<br><br>Bikes: {count}{status_line}{trips_line}{missed_line}{healthy_line}")
 
         fig = go.Figure()
 
