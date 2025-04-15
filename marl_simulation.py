@@ -7,22 +7,25 @@ from marl_demand_utils import choose_action
 import os
 import csv
 
-# Ensure missed trips file exists with headers
 missed_path = "datasets/missed_trips_marl.csv"
+# Write header only once, if file does not exist
 if not os.path.exists(missed_path):
     with open(missed_path, "w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow([
-            "trip_id", "start_time", "end_time",
-            "start_station_id", "end_station_id", "simulated_day"
-        ])
-
+        writer.writerow(["trip_id", "start_time", "end_time", "start_station_id", "end_station_id", "simulated_day"])
 
 station_df = pd.read_csv("datasets/all_stations.csv")
 trip_dfs = {
     "2022-05-05": pd.read_csv("datasets/all_trips_05_05.csv", parse_dates=["start_time", "end_time"]),
     "2022-05-11": pd.read_csv("datasets/all_trips_05_11.csv", parse_dates=["start_time", "end_time"]),
 }
+
+redistribution_df = pd.read_csv("datasets/station_stats_2022-05-05.csv")  # status source
+redistribution_mapping = {
+    row["station_id"]: row["status"]
+    for _, row in redistribution_df.iterrows()
+}
+
 # Dictionary to hold outgoing/incoming data per day
 historical_demand = {}
 
@@ -66,7 +69,8 @@ def build_agent_observation(station_id, current_hour, station_data, historical_d
 # Main function of MARL sim
 def run_marl_simulation_step(n, stations_marl_global, in_transit_marl_global, last_update_marl_global, last_frame_marl_frame):
     results = []
-    
+    missed_path = f"datasets/missed_trips_marl.csv"
+
     for selected_date in ["2022-05-05", "2022-05-11"]:
         trip_df = trip_dfs[selected_date]
         sim_date = datetime.strptime(selected_date, "%Y-%m-%d")
@@ -96,10 +100,26 @@ def run_marl_simulation_step(n, stations_marl_global, in_transit_marl_global, la
             }
             in_transit_marl_global[selected_date] = []
             last_update_marl_global[selected_date] = sim_date
+            
+            # ✅ Overwrite missed_trips_marl.csv for fresh start (only once)
+            if selected_date == "2022-05-05":
+                with open("datasets/missed_trips_marl.csv", "w", newline="") as f:
+                    writer = csv.writer(f)
+                    writer.writerow(["trip_id", "start_time", "end_time", "start_station_id", "end_station_id", "simulated_day"])
 
         stations = stations_marl_global[selected_date]
         in_transit = in_transit_marl_global[selected_date]
         last_time = last_update_marl_global[selected_date]
+        
+        # Create redistribution list if not exists
+        if "redistribution_in_transit" not in in_transit_marl_global:
+            in_transit_marl_global["redistribution_in_transit"] = {}
+
+        if selected_date not in in_transit_marl_global["redistribution_in_transit"]:
+            in_transit_marl_global["redistribution_in_transit"][selected_date] = []
+
+        redistribution_in_transit = in_transit_marl_global["redistribution_in_transit"][selected_date]
+
 
         # Handle returns
         to_return = [trip for trip in in_transit if trip["end_time"] <= current_time]
@@ -108,6 +128,15 @@ def run_marl_simulation_step(n, stations_marl_global, in_transit_marl_global, la
             if end_id in stations:
                 stations[end_id]["bike_count"] += 1
             in_transit.remove(trip)
+            
+        # Handle redistributed bikes arriving after delay
+        redistributed_arrivals = [t for t in redistribution_in_transit if t["end_time"] <= current_time]
+        for trip in redistributed_arrivals:
+            if trip["end_id"] in stations:
+                stations[trip["end_id"]]["bike_count"] += trip["quantity"]
+                stations[trip["end_id"]]["received_bikes"] += trip["quantity"]
+            redistribution_in_transit.remove(trip)
+
             
         # Track how often each MARL station is empty or full
         for sid in stations:
@@ -118,39 +147,49 @@ def run_marl_simulation_step(n, stations_marl_global, in_transit_marl_global, la
                 stations[sid]["was_full"] += 1
 
 
+        for sid in stations:
+            stations[sid]["just_missed"] = False
+    
         # Handle new trips
         new_trips = trip_df[
             (trip_df["start_time"] >= last_time) & (trip_df["start_time"] < current_time)
         ]
         missed = 0
+        stations[sid]["just_missed"] = False
+
 
         for _, row in new_trips.iterrows():
             start_id = str(row["start_station_id"])
             end_id = str(row["end_station_id"])
-            if start_id in stations and stations[start_id]["bike_count"] > 0:
-                stations[start_id]["bike_count"] -= 1
-                in_transit.append({
-                    "end_time": row["end_time"],
-                    "end_id": end_id
-                })
-                stations[start_id]["completed_trips"] += 1
-            else:
-                # Missed trip handling
-                stations[start_id]["missed_trips"] += 1
-                missed += 1
+            trip_time = row["start_time"]
 
-                # Save this missed trip to CSV
-                with open(missed_path, "a", newline="") as f:
-                    writer = csv.writer(f)
-                    writer.writerow([
-                        row["trip_id"],
-                        row["start_time"],
-                        row["end_time"],
-                        start_id,
-                        end_id,
-                        selected_date
-                    ])
-                
+            # Only process trips that should happen right now (current_time window)
+            if trip_time <= current_time:
+                if start_id in stations and stations[start_id]["bike_count"] > 0:
+                    stations[start_id]["bike_count"] -= 1
+                    in_transit.append({
+                        "end_time": row["end_time"],
+                        "end_id": end_id
+                    })
+                    stations[start_id]["completed_trips"] += 1
+                else:
+                    stations[start_id]["missed_trips"] += 1
+                    missed += 1
+                    stations[start_id]["just_missed"] = True
+
+
+                    # Save missed trip to CSV
+                    with open(missed_path, "a", newline="") as f:
+                        writer = csv.writer(f)
+                        writer.writerow([
+                            row["trip_id"],
+                            row["start_time"],
+                            row["end_time"],
+                            start_id,
+                            end_id,
+                            selected_date
+                        ])
+      
         # Build Observation for each agent
         total_frames = n + 1
         current_hour = current_time.hour
@@ -164,36 +203,64 @@ def run_marl_simulation_step(n, stations_marl_global, in_transit_marl_global, la
             for sid in stations
         }
         
-        for sid, obs in agent_observations.items():
-            neighbors = [nid for nid in stations if nid != sid]
+        # === Step 2: Choose and execute actions ONLY during 12:00–12:59 for both days ===
+        if 12 <= current_hour < 13:
+            for sid, obs in agent_observations.items():
+                neighbors = [nid for nid in stations if nid != sid]
 
-            # Unpack tuple-based action
-            action_type, target_station, quantity = choose_action(sid, obs, neighbors)
+                # Unpack action tuple from agent
+                action_type, target_station, quantity = choose_action(sid, obs, neighbors)
 
-            # Save the last action
-            stations[sid]["previous_action"] = (action_type, target_station, quantity)
+                # Save the last action
+                stations[sid]["previous_action"] = (action_type, target_station, quantity)
 
-            if action_type == "do_nothing":
-                continue
+                if action_type == "do_nothing":
+                    continue
 
-            elif action_type == "send_bikes":
-                if stations[sid]["bike_count"] >= quantity:
-                    stations[sid]["bike_count"] -= quantity
-
-                    if target_station in stations:
-                        stations[target_station]["bike_count"] += quantity
+                elif action_type == "send_bikes":
+                    if stations[sid]["bike_count"] >= quantity:
+                        stations[sid]["bike_count"] -= quantity
                         stations[sid]["sent_bikes"] += quantity
-                        stations[target_station]["received_bikes"] += quantity
 
-            elif action_type == "request_bikes":
-                if target_station in stations and stations[target_station]["bike_count"] >= quantity:
-                    stations[target_station]["bike_count"] -= quantity
-                    stations[sid]["bike_count"] += quantity
-                    stations[sid]["received_bikes"] += quantity
-                    stations[target_station]["sent_bikes"] += quantity
+                        if target_station in stations:
+                            redistribution_in_transit.append({
+                                "end_time": current_time + timedelta(minutes=45),
+                                "end_id": target_station,
+                                "quantity": quantity
+                            })
 
+                elif action_type == "request_bikes":
+                    if target_station in stations and stations[target_station]["bike_count"] >= quantity:
+                        stations[target_station]["bike_count"] -= quantity
+                        stations[target_station]["sent_bikes"] += quantity
+
+                        redistribution_in_transit.append({
+                            "end_time": current_time + timedelta(minutes=45),
+                            "end_id": sid,
+                            "quantity": quantity
+                        })
+
+                    
+        # Off-peak redistribution (only on May 11)
+        
         # === Draw map ===
         lats, lons, colors, sizes, hovers = [], [], [], [], []
+        # === Step 1: Track which stations sent or received redistributed bikes recently ===
+        show_redistribution_icons = []
+        redistribution_color_map = []
+
+        for sid in stations:
+            station = stations[sid]
+            sent = station.get("sent_bikes", 0)
+            received = station.get("received_bikes", 0)
+
+            # If redistribution just occurred within the last hour
+            if 12 <= current_time.hour <= 13:
+                if received > 0:
+                    show_redistribution_icons.append((sid, "received"))
+                elif sent > 0:
+                    show_redistribution_icons.append((sid, "sent"))
+
 
         for _, row in station_df.iterrows():
             sid = str(row["station_id"])
@@ -209,8 +276,58 @@ def run_marl_simulation_step(n, stations_marl_global, in_transit_marl_global, la
             received = stations.get(sid, {}).get("received_bikes", 0)
             hovers.append(f"{name}<br><br>Bikes: {count}<br>Sent / Received: {sent} / {received}")
 
-
         fig = go.Figure()
+
+        # === Add redistribution glow background ===
+        for sid, label in show_redistribution_icons:
+            row = station_df[station_df["station_id"] == sid].iloc[0]
+            
+            if label == "received":
+                glow_color = "chartreuse"  # lightgreen
+            else:
+                glow_color = "cyan"  # lightblue (for sending)
+
+            fig.add_trace(go.Scattermapbox(
+                lat=[row["lat"]],
+                lon=[row["lon"]],
+                mode="markers",
+                marker=go.scattermapbox.Marker(
+                    size=22,
+                    color=glow_color,
+                    opacity=0.8
+                ),
+                hoverinfo="skip",
+                showlegend=False
+            ))
+        
+        # After all the redistribution glow logic (end of for sid, label in show_redistribution_icons):
+
+        # === Missed trip halo (black glow) ===
+        halo_lats = []
+        halo_lons = []
+        halo_sizes = []
+
+        for _, row in station_df.iterrows():
+            sid = str(row["station_id"])
+            if stations.get(sid, {}).get("just_missed", False):
+                halo_lats.append(row["lat"])
+                halo_lons.append(row["lon"])
+                count = stations[sid]["bike_count"]
+                halo_sizes.append(min(9 + 0.5 * count, 15) + 5)
+
+        fig.add_trace(go.Scattermapbox(
+            lat=halo_lats,
+            lon=halo_lons,
+            mode="markers",
+            marker=go.scattermapbox.Marker(
+                size=halo_sizes,
+                color="black",
+                opacity=1
+            ),
+            hoverinfo="skip",
+            showlegend=False
+        ))
+
         fig.add_trace(go.Scattermapbox(
             lat=lats, lon=lons,
             mode="markers",
@@ -218,6 +335,7 @@ def run_marl_simulation_step(n, stations_marl_global, in_transit_marl_global, la
             text=hovers,
             hoverinfo='text'
         ))
+
         fig.update_layout(
             mapbox=dict(
                 style="carto-positron",
@@ -265,12 +383,56 @@ def run_marl_simulation_step(n, stations_marl_global, in_transit_marl_global, la
 
             summary_text = f"""✅ Total completed trips: {total_completed} | ❌ Total missed trips: {total_missed} | 🚲 Total bikes remaining: {total_bikes}"""
 
-            # Store into results[2] and results[5]
-            if selected_date == "2022-05-05":
-                results[2] = summary_text
-            else:
-                results[5] = summary_text
+            stats_rows = []
+            for sid, data in stations.items():
+                # Get total outgoing/incoming from historical demand (May 5th)
+                # Store into results[2] and results[5]
+                # Compute dynamically for both days
+                total_out = sum(historical_demand[selected_date]["outgoing"][sid].values())
+                total_in = sum(historical_demand[selected_date]["incoming"][sid].values())
 
+                # Assign summary to correct side
+                if selected_date == "2022-05-05":
+                    results[2] = summary_text
+                else:
+                    results[5] = summary_text
+
+                    
+                # Determine status
+                activity = data["completed_trips"] + data["missed_trips"]
+                empty_ratio = data["was_empty"] / 300
+                full_ratio = data["was_full"] / 300
+
+                if activity > 188:
+                    status = "busy"
+                elif activity < 58:
+                    status = "underused"
+                elif empty_ratio > 0.25:
+                    status = "always_empty"
+                elif full_ratio > 0.25:
+                    status = "always_full"
+                else:
+                    status = "balanced"
+
+                # Healthy %
+                healthy_frames = 300 - data["was_empty"] - data["was_full"]
+                healthy_percentage = round((healthy_frames / 300) * 100)
+
+                stats_rows.append({
+                    "station_id": sid,
+                    "completed_trips": data["completed_trips"],
+                    "missed_trips": data["missed_trips"],
+                    "final_bike_count": data["bike_count"],
+                    "simulated_day": selected_date,
+                    "status": status,
+                    "total_outgoing": total_out,
+                    "total_incoming": total_in,
+                    "healthy_percentage": healthy_percentage
+                })
+
+            filename = f"datasets/station_stats_marl_{selected_date}.csv"
+            pd.DataFrame(stats_rows).to_csv(filename, index=False)
+            print(f"✅ MARL stats exported to {filename}")
 
 
         last_update_marl_global[selected_date] = current_time

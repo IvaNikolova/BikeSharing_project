@@ -329,7 +329,7 @@ def update_dual_simulation(n):
 
         fig = go.Figure()
 
-        # Red halo trace (for missed trips)
+        # Black halo trace (for missed trips)
         fig.add_trace(go.Scattermapbox(
             lat=[latitudes[i] for i in range(len(latitudes)) if missed_flags[i]],
             lon=[longitudes[i] for i in range(len(longitudes)) if missed_flags[i]],
