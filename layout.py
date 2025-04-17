@@ -36,13 +36,12 @@ layout = html.Div([
             dcc.Graph(id='map_05_05', style={'height': '75vh', 'border': '1px solid #ccc', 'padding': '5px'}, config={'scrollZoom': True}),
         ], style={'width': '45%', 'display': 'inline-block', 'paddingRight': '5px'}),
 
-        # Map: May 11
         html.Div([
-            html.H4("🗓️ May 11th, 2022 (Busiest)", style={'textAlign': 'center'}),
-            html.Div(id='missed-trips-11', style={'textAlign': 'center', 'fontSize': '15px', 'color': 'crimson', 'marginBottom': '6px'}),
-            html.Div(id='summary-right', style={'textAlign': 'center', 'marginTop': '10px', 'fontSize': '15px'}),
-            dcc.Graph(id='map_05_11', style={'height': '75vh', 'border': '1px solid #ccc', 'padding': '5px'}, config={'scrollZoom': True}),
-        ], style={'width': '45%', 'display': 'inline-block', 'paddingRight': '5px'}),
+            html.H4("🗓️ May 5th, 2022 (MARL)", style={'textAlign': 'center'}),
+            html.Div(id='missed-trips-marl-05', style={'textAlign': 'center', 'fontSize': '15px', 'color': 'crimson', 'marginBottom': '6px'}),
+            html.Div(id='summary-marl-left', style={'textAlign': 'center', 'marginTop': '10px', 'fontSize': '15px'}),
+            dcc.Graph(id='map_marl_05_05', style={'height': '75vh', 'border': '1px solid #ccc', 'padding': '5px'}, config={'scrollZoom': True}),
+        ], style={'width': '45%', 'display': 'inline-block', 'paddingRight': '5px' }),
 
         # Right: Legend with a title
         html.Div([
@@ -108,13 +107,15 @@ layout = html.Div([
         html.H3("MARL Redistribution Simulation", style={'textAlign': 'center', 'marginTop': '40px'}),
 
         html.Div([
+            # Map: May 11
             html.Div([
-                html.H4("🗓️ May 5th, 2022 (MARL)", style={'textAlign': 'center'}),
-                html.Div(id='missed-trips-marl-05', style={'textAlign': 'center', 'fontSize': '15px', 'color': 'crimson', 'marginBottom': '6px'}),
-                html.Div(id='summary-marl-left', style={'textAlign': 'center', 'marginTop': '10px', 'fontSize': '15px'}),
-                dcc.Graph(id='map_marl_05_05', style={'height': '75vh', 'border': '1px solid #ccc', 'padding': '5px'}, config={'scrollZoom': True}),
-            ], style={'width': '45%', 'display': 'inline-block', 'paddingRight': '5px' }),
-
+                html.H4("🗓️ May 11th, 2022 (Busiest)", style={'textAlign': 'center'}),
+                html.Div(id='missed-trips-11', style={'textAlign': 'center', 'fontSize': '15px', 'color': 'crimson', 'marginBottom': '6px'}),
+                html.Div(id='summary-right', style={'textAlign': 'center', 'marginTop': '10px', 'fontSize': '15px'}),
+                dcc.Graph(id='map_05_11', style={'height': '75vh', 'border': '1px solid #ccc', 'padding': '5px'}, config={'scrollZoom': True}),
+            ], style={'width': '45%', 'display': 'inline-block', 'paddingRight': '5px'}),
+            
+            # Map: May 11 (MARL) 
             html.Div([
                 html.H4("🗓️ May 11th, 2022 (MARL)", style={'textAlign': 'center'}),
                 html.Div(id='missed-trips-marl-11', style={'textAlign': 'center', 'fontSize': '15px', 'color': 'crimson', 'marginBottom': '6px'}),

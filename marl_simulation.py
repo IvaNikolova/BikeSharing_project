@@ -2,7 +2,8 @@ import pandas as pd
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
 from marl_demand_utils import load_historical_demand
-from marl_demand_utils import choose_action  
+from marl_demand_utils import choose_action 
+from plotly.graph_objects import Figure 
 
 import os
 import csv
@@ -19,12 +20,17 @@ trip_dfs = {
     "2022-05-05": pd.read_csv("datasets/all_trips_05_05.csv", parse_dates=["start_time", "end_time"]),
     "2022-05-11": pd.read_csv("datasets/all_trips_05_11.csv", parse_dates=["start_time", "end_time"]),
 }
+initial_bike_counts = {}
+stats_df = pd.read_csv("datasets/station_stats_2022-05-05.csv")
 
-redistribution_df = pd.read_csv("datasets/station_stats_2022-05-05.csv")  # status source
 redistribution_mapping = {
     row["station_id"]: row["status"]
-    for _, row in redistribution_df.iterrows()
+    for _, row in stats_df.iterrows()
 }
+
+for _, row in stats_df.iterrows():
+    sid = str(row["station_id"])
+    initial_bike_counts[sid] = row["final_bike_count"]
 
 # Dictionary to hold outgoing/incoming data per day
 historical_demand = {}
@@ -38,6 +44,9 @@ for day, df in trip_dfs.items():
     }
 
 SPEED_MULTIPLIER = (24 * 60 * 60) / (5 * 60)  # 24h in 5min
+early_redistribution_done = set()
+redistribution_in_transit_list = {}
+
 
 # Helper function for marker colors
 def get_color(count):
@@ -65,9 +74,58 @@ def build_agent_observation(station_id, current_hour, station_data, historical_d
         "current_hour": current_hour,
         "previous_action": station_data.get("previous_action", "do_nothing")
     }
+    
+def perform_early_morning_redistribution(
+    stations,
+    redistribution_in_transit_list,
+    selected_date,
+    current_time,
+    target_level = 18
+):
+    """
+    Move bikes from stations with surplus (> target_level)
+    to stations with deficit (< target_level), and record
+    those moves so that they show up as halos in the map.
+    """
+    # 1) Identify donors and receivers
+    donors = {sid: data for sid, data in stations.items()
+              if data["bike_count"] > target_level}
+    receivers = {sid: data for sid, data in stations.items()
+                 if data["bike_count"] < target_level}
+
+    for sid_from, data_from in donors.items():
+        surplus = data_from["bike_count"] - target_level
+        if surplus <= 0:
+            continue
+
+        for sid_to, data_to in receivers.items():
+            deficit = target_level - data_to["bike_count"]
+            if deficit <= 0:
+                continue
+
+            move_qty = min(surplus, deficit)
+
+            # Update counts
+            stations[sid_from]["bike_count"] -= move_qty
+            stations[sid_to]["bike_count"]   += move_qty
+            stations[sid_from]["early_sent_glow"] = 3 
+            
+            redistribution_in_transit_list.append({
+                "end_id": sid_to,
+                "quantity": move_qty,
+                "end_time": current_time + timedelta(minutes=45),
+                "from_id": sid_from  
+            })
+
+            print(f"  🚚 {move_qty} bikes moved from {sid_from} → {sid_to}")
+
+            surplus -= move_qty
+            if surplus <= 0:
+                break   
+
 
 # Main function of MARL sim
-def run_marl_simulation_step(n, stations_marl_global, in_transit_marl_global, last_update_marl_global, last_frame_marl_frame):
+def run_marl_simulation_step(n, stations_marl_global, in_transit_marl_global, last_update_marl_global, last_frame_marl_frame, redistribution_in_transit_list):
     results = []
     missed_path = f"datasets/missed_trips_marl.csv"
 
@@ -76,19 +134,20 @@ def run_marl_simulation_step(n, stations_marl_global, in_transit_marl_global, la
         sim_date = datetime.strptime(selected_date, "%Y-%m-%d")
         current_time = sim_date + timedelta(seconds=n * SPEED_MULTIPLIER)
 
-        # Skip duplicate frames
-        if selected_date not in last_frame_marl_frame:
-            last_frame_marl_frame[selected_date] = -1
-        if n <= last_frame_marl_frame[selected_date]:
-            from dash.exceptions import PreventUpdate
-            raise PreventUpdate
-        last_frame_marl_frame[selected_date] = n
+         # Create redistribution list if not exists
+        if "redistribution_in_transit_list" not in in_transit_marl_global:
+            in_transit_marl_global["redistribution_in_transit_list"] = {}
+
+        if selected_date not in in_transit_marl_global["redistribution_in_transit_list"]:
+            in_transit_marl_global["redistribution_in_transit_list"][selected_date] = []
+
+        redistribution_in_transit_list = in_transit_marl_global["redistribution_in_transit_list"][selected_date]
 
         # Init state
         if n == 0 or selected_date not in stations_marl_global:
             stations_marl_global[selected_date] = {
                 sid: {
-                    "bike_count": 30,
+                    "bike_count": initial_bike_counts.get(sid, 30),
                     "completed_trips": 0,
                     "missed_trips": 0,
                     "was_empty": 0,
@@ -100,6 +159,7 @@ def run_marl_simulation_step(n, stations_marl_global, in_transit_marl_global, la
             }
             in_transit_marl_global[selected_date] = []
             last_update_marl_global[selected_date] = sim_date
+            redistribution_in_transit_list = in_transit_marl_global["redistribution_in_transit_list"][selected_date]
             
             # ✅ Overwrite missed_trips_marl.csv for fresh start (only once)
             if selected_date == "2022-05-05":
@@ -111,15 +171,26 @@ def run_marl_simulation_step(n, stations_marl_global, in_transit_marl_global, la
         in_transit = in_transit_marl_global[selected_date]
         last_time = last_update_marl_global[selected_date]
         
-        # Create redistribution list if not exists
-        if "redistribution_in_transit" not in in_transit_marl_global:
-            in_transit_marl_global["redistribution_in_transit"] = {}
-
-        if selected_date not in in_transit_marl_global["redistribution_in_transit"]:
-            in_transit_marl_global["redistribution_in_transit"][selected_date] = []
-
-        redistribution_in_transit = in_transit_marl_global["redistribution_in_transit"][selected_date]
-
+        # Skip duplicate frames
+        if selected_date not in last_frame_marl_frame:
+            last_frame_marl_frame[selected_date] = -1
+        if n <= last_frame_marl_frame[selected_date]:
+            from dash.exceptions import PreventUpdate
+            raise PreventUpdate
+        
+        last_frame_marl_frame[selected_date] = n
+        
+        # Early redistribution trigger (3:00–4:00)
+        if selected_date not in early_redistribution_done:
+            if 3 <= current_time.hour < 4:
+                perform_early_morning_redistribution(
+                    stations,
+                    redistribution_in_transit_list,
+                    selected_date,
+                    current_time,
+                    target_level=18
+                )
+                early_redistribution_done.add(selected_date)
 
         # Handle returns
         to_return = [trip for trip in in_transit if trip["end_time"] <= current_time]
@@ -130,12 +201,14 @@ def run_marl_simulation_step(n, stations_marl_global, in_transit_marl_global, la
             in_transit.remove(trip)
             
         # Handle redistributed bikes arriving after delay
-        redistributed_arrivals = [t for t in redistribution_in_transit if t["end_time"] <= current_time]
+        redistributed_arrivals = [t for t in redistribution_in_transit_list if t["end_time"] <= current_time]
         for trip in redistributed_arrivals:
             if trip["end_id"] in stations:
                 stations[trip["end_id"]]["bike_count"] += trip["quantity"]
                 stations[trip["end_id"]]["received_bikes"] += trip["quantity"]
-            redistribution_in_transit.remove(trip)
+                stations[trip["end_id"]]["early_received_glow"] = 3  
+
+            redistribution_in_transit_list.remove(trip)
 
             
         # Track how often each MARL station is empty or full
@@ -223,7 +296,7 @@ def run_marl_simulation_step(n, stations_marl_global, in_transit_marl_global, la
                         stations[sid]["sent_bikes"] += quantity
 
                         if target_station in stations:
-                            redistribution_in_transit.append({
+                            redistribution_in_transit_list.append({
                                 "end_time": current_time + timedelta(minutes=45),
                                 "end_id": target_station,
                                 "quantity": quantity
@@ -234,7 +307,7 @@ def run_marl_simulation_step(n, stations_marl_global, in_transit_marl_global, la
                         stations[target_station]["bike_count"] -= quantity
                         stations[target_station]["sent_bikes"] += quantity
 
-                        redistribution_in_transit.append({
+                        redistribution_in_transit_list.append({
                             "end_time": current_time + timedelta(minutes=45),
                             "end_id": sid,
                             "quantity": quantity
@@ -276,75 +349,7 @@ def run_marl_simulation_step(n, stations_marl_global, in_transit_marl_global, la
             received = stations.get(sid, {}).get("received_bikes", 0)
             hovers.append(f"{name}<br><br>Bikes: {count}<br>Sent / Received: {sent} / {received}")
 
-        fig = go.Figure()
-
-        # === Add redistribution glow background ===
-        for sid, label in show_redistribution_icons:
-            row = station_df[station_df["station_id"] == sid].iloc[0]
-            
-            if label == "received":
-                glow_color = "chartreuse"  # lightgreen
-            else:
-                glow_color = "cyan"  # lightblue (for sending)
-
-            fig.add_trace(go.Scattermapbox(
-                lat=[row["lat"]],
-                lon=[row["lon"]],
-                mode="markers",
-                marker=go.scattermapbox.Marker(
-                    size=22,
-                    color=glow_color,
-                    opacity=0.8
-                ),
-                hoverinfo="skip",
-                showlegend=False
-            ))
-        
-        # After all the redistribution glow logic (end of for sid, label in show_redistribution_icons):
-
-        # === Missed trip halo (black glow) ===
-        halo_lats = []
-        halo_lons = []
-        halo_sizes = []
-
-        for _, row in station_df.iterrows():
-            sid = str(row["station_id"])
-            if stations.get(sid, {}).get("just_missed", False):
-                halo_lats.append(row["lat"])
-                halo_lons.append(row["lon"])
-                count = stations[sid]["bike_count"]
-                halo_sizes.append(min(9 + 0.5 * count, 15) + 5)
-
-        fig.add_trace(go.Scattermapbox(
-            lat=halo_lats,
-            lon=halo_lons,
-            mode="markers",
-            marker=go.scattermapbox.Marker(
-                size=halo_sizes,
-                color="black",
-                opacity=1
-            ),
-            hoverinfo="skip",
-            showlegend=False
-        ))
-
-        fig.add_trace(go.Scattermapbox(
-            lat=lats, lon=lons,
-            mode="markers",
-            marker=go.scattermapbox.Marker(size=sizes, color=colors, opacity=0.8),
-            text=hovers,
-            hoverinfo='text'
-        ))
-
-        fig.update_layout(
-            mapbox=dict(
-                style="carto-positron",
-                center=dict(lat=sum(lats)/len(lats), lon=sum(lons)/len(lons)),
-                zoom=12
-            ),
-            margin=dict(l=0, r=0, t=30, b=0),
-            showlegend=False
-        )
+        fig = draw_map(stations, station_df, current_time)
 
         results.extend([
             fig,
@@ -434,6 +439,11 @@ def run_marl_simulation_step(n, stations_marl_global, in_transit_marl_global, la
             pd.DataFrame(stats_rows).to_csv(filename, index=False)
             print(f"✅ MARL stats exported to {filename}")
 
+        for station in stations.values():
+            if isinstance(station.get("early_sent_glow"), int) and station["early_sent_glow"] > 0:
+                station["early_sent_glow"] -= 1
+            if isinstance(station.get("early_received_glow"), int) and station["early_received_glow"] > 0:
+                station["early_received_glow"] -= 1
 
         last_update_marl_global[selected_date] = current_time
 
@@ -445,3 +455,125 @@ def run_marl_simulation_step(n, stations_marl_global, in_transit_marl_global, la
         results[2],  # summary-marl-left
         results[5],  # summary-marl-right
     )
+
+def draw_map(stations, station_df, current_time):
+    import plotly.graph_objects as go
+
+    fig = go.Figure()
+    lats, lons, colors, sizes, hovers = [], [], [], [], []
+
+    # Base station markers and hovers
+    for _, row in station_df.iterrows():
+        sid = str(row["station_id"])
+        lat, lon = row["lat"], row["lon"]
+        name = row["station_name"]
+        count = stations.get(sid, {}).get("bike_count", 0)
+        sent = stations.get(sid, {}).get("sent_bikes", 0)
+        received = stations.get(sid, {}).get("received_bikes", 0)
+
+        lats.append(lat)
+        lons.append(lon)
+        colors.append(get_color(count))
+        sizes.append(min(9 + 0.5 * count, 15))
+        hovers.append(f"{name}<br><br>Bikes: {count}<br>Sent / Received: {sent} / {received}")
+
+    # --- Glow logic ---
+    for sid in stations:
+        station = stations[sid]
+        row = station_df[station_df["station_id"] == sid]
+        if row.empty:
+            continue
+        lat = row.iloc[0]["lat"]
+        lon = row.iloc[0]["lon"]
+
+        # 💙 Early morning sender glow
+        if isinstance(station.get("early_sent_glow"), int) and station["early_sent_glow"] > 0:
+            fig.add_trace(go.Scattermapbox(
+                lat=[lat],
+                lon=[lon],
+                mode="markers",
+                marker=go.scattermapbox.Marker(size=22, color="cyan", opacity=0.8),
+                hoverinfo="skip",
+                showlegend=False
+            ))
+
+        # 💚 Early morning receiver glow
+        if isinstance(station.get("early_received_glow"), int) and station["early_received_glow"] > 0:
+            fig.add_trace(go.Scattermapbox(
+                lat=[lat],
+                lon=[lon],
+                mode="markers",
+                marker=go.scattermapbox.Marker(size=22, color="chartreuse", opacity=0.8),
+                hoverinfo="skip",
+                showlegend=False
+            ))
+
+    # 💫 MARL redistribution halos (12:00–13:00)
+    if 12 <= current_time.hour <= 13:
+        for sid in stations:
+            station = stations[sid]
+            row = station_df[station_df["station_id"] == sid]
+            if row.empty:
+                continue
+            lat = row.iloc[0]["lat"]
+            lon = row.iloc[0]["lon"]
+
+            if station.get("sent_bikes", 0) > 0:
+                fig.add_trace(go.Scattermapbox(
+                    lat=[lat],
+                    lon=[lon],
+                    mode="markers",
+                    marker=go.scattermapbox.Marker(size=22, color="cyan", opacity=0.8),
+                    hoverinfo="skip",
+                    showlegend=False
+                ))
+            elif station.get("received_bikes", 0) > 0:
+                fig.add_trace(go.Scattermapbox(
+                    lat=[lat],
+                    lon=[lon],
+                    mode="markers",
+                    marker=go.scattermapbox.Marker(size=22, color="chartreuse", opacity=0.8),
+                    hoverinfo="skip",
+                    showlegend=False
+                ))
+
+    # ⛔ Missed trip glow
+    for sid in stations:
+        station = stations[sid]
+        if station.get("just_missed", False):
+            row = station_df[station_df["station_id"] == sid]
+            if row.empty:
+                continue
+            lat = row.iloc[0]["lat"]
+            lon = row.iloc[0]["lon"]
+            size = min(9 + 0.5 * station["bike_count"], 15) + 5
+
+            fig.add_trace(go.Scattermapbox(
+                lat=[lat],
+                lon=[lon],
+                mode="markers",
+                marker=go.scattermapbox.Marker(size=size, color="black", opacity=1),
+                hoverinfo="skip",
+                showlegend=False
+            ))
+
+    # Add final visible markers (stations)
+    fig.add_trace(go.Scattermapbox(
+        lat=lats, lon=lons,
+        mode="markers",
+        marker=go.scattermapbox.Marker(size=sizes, color=colors, opacity=0.8),
+        text=hovers,
+        hoverinfo='text'
+    ))
+
+    fig.update_layout(
+        mapbox=dict(
+            style="carto-positron",
+            center=dict(lat=sum(lats)/len(lats), lon=sum(lons)/len(lons)),
+            zoom=12
+        ),
+        margin=dict(l=0, r=0, t=30, b=0),
+        showlegend=False
+    )
+
+    return fig

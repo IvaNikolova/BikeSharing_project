@@ -63,6 +63,7 @@ stations_marl_global = {}
 in_transit_marl_global = {}
 last_update_marl_global = {}
 last_frame_marl_frame = {}
+redistribution_in_transit = {}
 
 # === Helper functions ===
 def get_color(bike_count):
@@ -387,7 +388,7 @@ def update_dual_simulation(n):
     Input('interval-component', 'n_intervals')
 )
 def update_marl_simulation(n):
-    return run_marl_simulation_step(n, stations_marl_global, in_transit_marl_global, last_update_marl_global, last_frame_marl_frame)
+    return run_marl_simulation_step(n, stations_marl_global, in_transit_marl_global, last_update_marl_global, last_frame_marl_frame, redistribution_in_transit)
 
 # === Run the app ===
 if __name__ == '__main__':
