@@ -2,13 +2,13 @@ import pandas as pd
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
 from marl_demand_utils import load_historical_demand
-from marl_demand_utils import choose_action 
 from plotly.graph_objects import Figure 
 
 import os
 import csv
 
 missed_path = "datasets/missed_trips_marl.csv"
+
 # Write header only once, if file does not exist
 if not os.path.exists(missed_path):
     with open(missed_path, "w", newline="") as f:
@@ -20,8 +20,13 @@ trip_dfs = {
     "2022-05-05": pd.read_csv("datasets/all_trips_05_05.csv", parse_dates=["start_time", "end_time"]),
     "2022-05-11": pd.read_csv("datasets/all_trips_05_11.csv", parse_dates=["start_time", "end_time"]),
 }
+
 initial_bike_counts = {}
 stats_df = pd.read_csv("datasets/station_stats_2022-05-05.csv")
+station_demand = {str(row["station_id"]): row["completed_trips"] for _, row in stats_df.iterrows()}
+sorted_demand = sorted(station_demand.items(), key=lambda x: x[1], reverse=True)
+demand_receivers = [sid for sid, _ in sorted_demand[:60]]  # Top 60 stations
+demand_donors = [sid for sid, _ in sorted_demand[-60:]]    # Bottom 60 stations
 
 redistribution_mapping = {
     row["station_id"]: row["status"]
@@ -276,44 +281,34 @@ def run_marl_simulation_step(n, stations_marl_global, in_transit_marl_global, la
             for sid in stations
         }
         
-        # === Step 2: Choose and execute actions ONLY during 12:00–12:59 for both days ===
+        # === Step 2: Demand-based redistribution (12:00–13:00) ===
         if 12 <= current_hour < 13:
-            for sid, obs in agent_observations.items():
-                neighbors = [nid for nid in stations if nid != sid]
-
-                # Unpack action tuple from agent
-                action_type, target_station, quantity = choose_action(sid, obs, neighbors)
-
-                # Save the last action
-                stations[sid]["previous_action"] = (action_type, target_station, quantity)
-
-                if action_type == "do_nothing":
+            for sid_from in demand_donors:
+                if sid_from not in stations or stations[sid_from]["bike_count"] <= 18:
                     continue
 
-                elif action_type == "send_bikes":
-                    if stations[sid]["bike_count"] >= quantity:
-                        stations[sid]["bike_count"] -= quantity
-                        stations[sid]["sent_bikes"] += quantity
+                for sid_to in demand_receivers:
+                    if sid_to not in stations:
+                        continue
 
-                        if target_station in stations:
-                            redistribution_in_transit_list.append({
-                                "end_time": current_time + timedelta(minutes=45),
-                                "end_id": target_station,
-                                "quantity": quantity
-                            })
+                    if stations[sid_to]["bike_count"] >= 30:
+                        continue
 
-                elif action_type == "request_bikes":
-                    if target_station in stations and stations[target_station]["bike_count"] >= quantity:
-                        stations[target_station]["bike_count"] -= quantity
-                        stations[target_station]["sent_bikes"] += quantity
+                    move_qty = min(stations[sid_from]["bike_count"] - 18, 30 - stations[sid_to]["bike_count"])
+                    if move_qty <= 0:
+                        continue
 
-                        redistribution_in_transit_list.append({
-                            "end_time": current_time + timedelta(minutes=45),
-                            "end_id": sid,
-                            "quantity": quantity
-                        })
+                    stations[sid_from]["bike_count"] -= move_qty
+                    stations[sid_to]["received_bikes"] += move_qty
+                    stations[sid_from]["sent_bikes"] += move_qty  # <- Glow trigger
+                    redistribution_in_transit_list.append({
+                        "end_time": current_time + timedelta(minutes=45),
+                        "end_id": sid_to,
+                        "quantity": move_qty
+                    })
 
-                    
+                    print(f"🚲 Demand-based redistribution: {move_qty} bikes from {sid_from} → {sid_to}")
+
         # Off-peak redistribution (only on May 11)
         
         # === Draw map ===
@@ -444,6 +439,11 @@ def run_marl_simulation_step(n, stations_marl_global, in_transit_marl_global, la
                 station["early_sent_glow"] -= 1
             if isinstance(station.get("early_received_glow"), int) and station["early_received_glow"] > 0:
                 station["early_received_glow"] -= 1
+                
+            if 12 <= current_time.hour < 13:
+                continue  # keep glow active
+            station["sent_bikes"] = 0
+            station["received_bikes"] = 0
 
         last_update_marl_global[selected_date] = current_time
 
@@ -509,6 +509,7 @@ def draw_map(stations, station_df, current_time):
             ))
 
     # 💫 MARL redistribution halos (12:00–13:00)
+    # 💫 MARL redistribution halos (12:00–13:00)
     if 12 <= current_time.hour <= 13:
         for sid in stations:
             station = stations[sid]
@@ -536,6 +537,7 @@ def draw_map(stations, station_df, current_time):
                     hoverinfo="skip",
                     showlegend=False
                 ))
+   
 
     # ⛔ Missed trip glow
     for sid in stations:
