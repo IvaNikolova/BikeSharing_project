@@ -64,6 +64,7 @@ in_transit_marl_global = {}
 last_update_marl_global = {}
 last_frame_marl_frame = {}
 redistribution_in_transit = {}
+STATION_CAPACITY = 30
 
 # === Helper functions ===
 def get_color(bike_count):
@@ -138,7 +139,8 @@ def update_dual_simulation(n):
                     "status": None,
                     "has_missed": False,
                     "just_missed": False,
-                    "healthy_time": 0
+                    "healthy_time": 0,
+                    "availability_sum": 0
                 }for sid in station_df['station_id']}
             last_update_time_global[selected_date_str] = sim_date
 
@@ -163,9 +165,15 @@ def update_dual_simulation(n):
             elif bike_count >= 27:
                 stations_global[selected_date_str][sid]["was_full"] += 1
 
-            #  Count healthy frames (new)
+            #  Count healthy frames 
             if 16 <= bike_count <= 30:
                 stations_global[selected_date_str][sid]["healthy_time"] += 1
+                
+            # Track availability % over time
+            if "availability_sum" not in stations_global[selected_date_str][sid]:
+                stations_global[selected_date_str][sid]["availability_sum"] = 0
+            stations_global[selected_date_str][sid]["availability_sum"] +=  bike_count / STATION_CAPACITY * 100
+
 
         new_trips = trip_df[
             (trip_df['start_time'] >= last_time) &
@@ -237,8 +245,31 @@ def update_dual_simulation(n):
                     status = "balanced"
 
                 data["status"] = status
-               
+            
+            total_completed = sum(data["completed_trips"] for data in stations_global[selected_date_str].values())
+            total_missed = sum(data["final_missed_trips"] for data in stations_global[selected_date_str].values())
+            total_bikes = sum(data["bike_count"] for data in stations_global[selected_date_str].values())
+            
+            if (total_completed + total_missed) > 0:
+                trip_completion_rate = round((total_completed / (total_completed + total_missed)) * 100, 2)
+            else:
+                trip_completion_rate = 0
                 
+            station_availabilities = [
+                data["availability_sum"] / 300  # 300 frames in a day
+                for data in stations_global[selected_date_str].values()
+                if "availability_sum" in data
+            ]
+            overall_availability = round(sum(station_availabilities) / len(station_availabilities), 2)
+
+            summary_text = f"""✅ Completed: {total_completed} | ❌ Missed: {total_missed} | 🚲 Remaining Bikes: {total_bikes} | 🎯 Completion Rate: {trip_completion_rate}% | 📈 Availability: {overall_availability}% """
+
+            if selected_date_str == "2022-05-05":
+                summary_left_text = summary_text
+            else:
+                summary_right_text = summary_text
+                
+            
             # Prepare CSV export    
             stats_rows = []
             for sid, data in stations_global[selected_date_str].items():
@@ -267,17 +298,6 @@ def update_dual_simulation(n):
                     "healthy_percentage": healthy_percentage
                 })
             pd.DataFrame(stats_rows).to_csv(f"datasets/station_stats_{selected_date_str}.csv", index=False)
-            
-            total_completed = sum(data["completed_trips"] for data in stations_global[selected_date_str].values())
-            total_missed = sum(data["final_missed_trips"] for data in stations_global[selected_date_str].values())
-            total_bikes = sum(data["bike_count"] for data in stations_global[selected_date_str].values())
-
-            summary_text = f"""✅ Total completed trips: {total_completed} | ❌ Total missed trips: {total_missed} | 🚲 Total bikes remaining: {total_bikes}"""
-
-            if selected_date_str == "2022-05-05":
-                summary_left_text = summary_text
-            else:
-                summary_right_text = summary_text
             
         # === Create the map figure ===
         latitudes = []
@@ -320,13 +340,17 @@ def update_dual_simulation(n):
                 healthy_frames = stations_global[selected_date_str][sid].get("healthy_time", 0)
                 healthy_percentage = round(healthy_frames / total_frames * 100)
                 healthy_line = f"<br>Healthy Time: {healthy_percentage}%"
+                avg_availability = round(stations_global[selected_date_str][sid]["availability_sum"] / total_frames, 2)
+                availability_rate = f"<br>Average Availability: {avg_availability}%"
             else:
                 status_line = ""
                 trips_line = ""
                 missed_line = ""
                 healthy_line = ""
+                availability = round(100 * count / STATION_CAPACITY, 2)
+                availability_rate = f"<br>Availability: {availability}%"
 
-            hover_texts.append(f"{name}<br><br>Bikes: {count}{status_line}{trips_line}{missed_line}{healthy_line}")
+            hover_texts.append(f"{name}<br><br>Bikes: {count}{status_line}{trips_line}{missed_line}{healthy_line}{availability_rate}")
 
         fig = go.Figure()
 

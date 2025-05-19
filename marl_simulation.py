@@ -3,7 +3,6 @@ import plotly.graph_objects as go
 from datetime import datetime, timedelta
 from marl_demand_utils import load_historical_demand
 from plotly.graph_objects import Figure 
-
 import os
 import csv
 
@@ -27,6 +26,10 @@ station_demand = {str(row["station_id"]): row["completed_trips"] for _, row in s
 sorted_demand = sorted(station_demand.items(), key=lambda x: x[1], reverse=True)
 demand_receivers = [sid for sid, _ in sorted_demand[:60]]  # Top 60 stations
 demand_donors = [sid for sid, _ in sorted_demand[-60:]]    # Bottom 60 stations
+rebalancing_cost_global = {
+        "2022-05-05": 0,
+        "2022-05-11": 0
+    }
 
 redistribution_mapping = {
     row["station_id"]: row["status"]
@@ -51,7 +54,7 @@ for day, df in trip_dfs.items():
 SPEED_MULTIPLIER = (24 * 60 * 60) / (5 * 60)  # 24h in 5min
 early_redistribution_done = set()
 redistribution_in_transit_list = {}
-
+STATION_CAPACITY = 30
 
 # Helper function for marker colors
 def get_color(count):
@@ -85,14 +88,11 @@ def perform_early_morning_redistribution(
     redistribution_in_transit_list,
     selected_date,
     current_time,
-    target_level = 18
-):
-    """
-    Move bikes from stations with surplus (> target_level)
-    to stations with deficit (< target_level), and record
-    those moves so that they show up as halos in the map.
-    """
-    # 1) Identify donors and receivers
+    target_level = 18,
+    rebalancing_cost=0,
+    rebalancing_cost_global=None):
+   
+    # Identify donors and receivers
     donors = {sid: data for sid, data in stations.items()
               if data["bike_count"] > target_level}
     receivers = {sid: data for sid, data in stations.items()
@@ -114,6 +114,9 @@ def perform_early_morning_redistribution(
             stations[sid_from]["bike_count"] -= move_qty
             stations[sid_to]["bike_count"]   += move_qty
             stations[sid_from]["early_sent_glow"] = 3 
+            rebalancing_cost += move_qty
+            rebalancing_cost_global[selected_date] += move_qty  
+            print(f"🧾 Early-morning: +{move_qty} → rebalancing_cost for {selected_date} = {rebalancing_cost_global[selected_date]}")
             
             redistribution_in_transit_list.append({
                 "end_id": sid_to,
@@ -122,24 +125,34 @@ def perform_early_morning_redistribution(
                 "from_id": sid_from  
             })
 
-            print(f"  🚚 {move_qty} bikes moved from {sid_from} → {sid_to}")
-
+            # print(f"  🚚 {move_qty} bikes moved from {sid_from} → {sid_to}")
             surplus -= move_qty
             if surplus <= 0:
-                break   
-
+                break  
+            
+    return rebalancing_cost
+ 
 
 # Main function of MARL sim
 def run_marl_simulation_step(n, stations_marl_global, in_transit_marl_global, last_update_marl_global, last_frame_marl_frame, redistribution_in_transit_list):
     results = []
     missed_path = f"datasets/missed_trips_marl.csv"
+    
+    blank_fig = go.Figure()
+    blank_fig.update_layout(
+        mapbox_style="carto-positron",
+        mapbox_zoom=12,
+        mapbox_center={"lat": 40.4168, "lon": -3.7038}
+    )
+    results = [blank_fig, "", "", blank_fig, "", ""]  # pre-fill map placeholders
 
     for selected_date in ["2022-05-05", "2022-05-11"]:
         trip_df = trip_dfs[selected_date]
         sim_date = datetime.strptime(selected_date, "%Y-%m-%d")
         current_time = sim_date + timedelta(seconds=n * SPEED_MULTIPLIER)
+        rebalancing_cost = 0
 
-         # Create redistribution list if not exists
+        # Create redistribution list if not exists
         if "redistribution_in_transit_list" not in in_transit_marl_global:
             in_transit_marl_global["redistribution_in_transit_list"] = {}
 
@@ -166,7 +179,7 @@ def run_marl_simulation_step(n, stations_marl_global, in_transit_marl_global, la
             last_update_marl_global[selected_date] = sim_date
             redistribution_in_transit_list = in_transit_marl_global["redistribution_in_transit_list"][selected_date]
             
-            # ✅ Overwrite missed_trips_marl.csv for fresh start (only once)
+            # Overwrite missed_trips_marl.csv for fresh start (only once)
             if selected_date == "2022-05-05":
                 with open("datasets/missed_trips_marl.csv", "w", newline="") as f:
                     writer = csv.writer(f)
@@ -188,13 +201,14 @@ def run_marl_simulation_step(n, stations_marl_global, in_transit_marl_global, la
         # Early redistribution trigger (3:00–4:00)
         if selected_date not in early_redistribution_done:
             if 3 <= current_time.hour < 4:
-                perform_early_morning_redistribution(
+                rebalancing_cost = perform_early_morning_redistribution(
                     stations,
                     redistribution_in_transit_list,
                     selected_date,
                     current_time,
-                    target_level=18
-                )
+                    target_level=18,
+                    rebalancing_cost=rebalancing_cost,
+                    rebalancing_cost_global=rebalancing_cost_global                )
                 early_redistribution_done.add(selected_date)
 
         # Handle returns
@@ -214,8 +228,7 @@ def run_marl_simulation_step(n, stations_marl_global, in_transit_marl_global, la
                 stations[trip["end_id"]]["early_received_glow"] = 3  
 
             redistribution_in_transit_list.remove(trip)
-
-            
+ 
         # Track how often each MARL station is empty or full
         for sid in stations:
             count = stations[sid]["bike_count"]
@@ -223,6 +236,12 @@ def run_marl_simulation_step(n, stations_marl_global, in_transit_marl_global, la
                 stations[sid]["was_empty"] += 1
             elif count >= 27:
                 stations[sid]["was_full"] += 1
+
+            # Track availability % over time
+            availability = 100 * count / STATION_CAPACITY
+            if "availability_sum" not in stations[sid]:
+                stations[sid]["availability_sum"] = 0
+            stations[sid]["availability_sum"] += availability
 
 
         for sid in stations:
@@ -234,7 +253,6 @@ def run_marl_simulation_step(n, stations_marl_global, in_transit_marl_global, la
         ]
         missed = 0
         stations[sid]["just_missed"] = False
-
 
         for _, row in new_trips.iterrows():
             start_id = str(row["start_station_id"])
@@ -255,7 +273,6 @@ def run_marl_simulation_step(n, stations_marl_global, in_transit_marl_global, la
                     missed += 1
                     stations[start_id]["just_missed"] = True
 
-
                     # Save missed trip to CSV
                     with open(missed_path, "a", newline="") as f:
                         writer = csv.writer(f)
@@ -267,7 +284,7 @@ def run_marl_simulation_step(n, stations_marl_global, in_transit_marl_global, la
                             end_id,
                             selected_date
                         ])
-      
+                        
         # Build Observation for each agent
         total_frames = n + 1
         current_hour = current_time.hour
@@ -281,7 +298,7 @@ def run_marl_simulation_step(n, stations_marl_global, in_transit_marl_global, la
             for sid in stations
         }
         
-        # === Step 2: Demand-based redistribution (12:00–13:00) ===
+        # Demand-based redistribution (12:00–13:00) 
         if 12 <= current_hour < 13:
             for sid_from in demand_donors:
                 if sid_from not in stations or stations[sid_from]["bike_count"] <= 18:
@@ -300,20 +317,19 @@ def run_marl_simulation_step(n, stations_marl_global, in_transit_marl_global, la
 
                     stations[sid_from]["bike_count"] -= move_qty
                     stations[sid_to]["received_bikes"] += move_qty
-                    stations[sid_from]["sent_bikes"] += move_qty  # <- Glow trigger
+                    stations[sid_from]["sent_bikes"] += move_qty  
+                    rebalancing_cost += move_qty
+                    rebalancing_cost_global[selected_date] += move_qty
                     redistribution_in_transit_list.append({
                         "end_time": current_time + timedelta(minutes=45),
                         "end_id": sid_to,
                         "quantity": move_qty
                     })
-
-                    print(f"🚲 Demand-based redistribution: {move_qty} bikes from {sid_from} → {sid_to}")
-
-        # Off-peak redistribution (only on May 11)
+                    print(f"🧾 Noon: +{move_qty} → rebalancing_cost for {selected_date} = {rebalancing_cost_global[selected_date]}")
         
         # === Draw map ===
         lats, lons, colors, sizes, hovers = [], [], [], [], []
-        # === Step 1: Track which stations sent or received redistributed bikes recently ===
+        # === Track which stations sent or received redistributed bikes recently ===
         show_redistribution_icons = []
         redistribution_color_map = []
 
@@ -328,7 +344,6 @@ def run_marl_simulation_step(n, stations_marl_global, in_transit_marl_global, la
                     show_redistribution_icons.append((sid, "received"))
                 elif sent > 0:
                     show_redistribution_icons.append((sid, "sent"))
-
 
         for _, row in station_df.iterrows():
             sid = str(row["station_id"])
@@ -345,20 +360,24 @@ def run_marl_simulation_step(n, stations_marl_global, in_transit_marl_global, la
             hovers.append(f"{name}<br><br>Bikes: {count}<br>Sent / Received: {sent} / {received}")
 
         fig = draw_map(stations, station_df, current_time)
+        if selected_date == "2022-05-05":
+            results[0] = fig  # map
+            results[1] = f"❌ Missed Trips: {missed}"
+        elif selected_date == "2022-05-11":
+            results[3] = fig  # map
+            results[4] = f"❌ Missed Trips: {missed}"
 
-        results.extend([
-            fig,
-            f"❌ Missed Trips: {missed}",
-            ""
-        ])
         
         if n == 300:  # Only print when simulation ends
+            # Make sure results has at least 6 slots (for index 2 and 5)
+            while len(results) < 6:
+                results.append("")
             print(f"\n Simulation Summary for {selected_date}:")
 
             # === 1. Empty / Full Count Debug ===
             print("\n Empty / Full Tracking (first 5 stations):")
             for sid, data in list(stations.items())[:5]:
-                print(f"  Station {sid} → was_empty: {data['was_empty']}, was_full: {data['was_full']}")
+               print(f"  Station {sid} → was_empty: {data['was_empty']}, was_full: {data['was_full']}")
 
             # === 2. Incoming / Outgoing Demand Debug ===
             current_hour = current_time.hour
@@ -366,24 +385,48 @@ def run_marl_simulation_step(n, stations_marl_global, in_transit_marl_global, la
             for sid in list(stations.keys())[:5]:
                 outgoing = historical_demand[selected_date]["outgoing"][sid].get(current_hour, 0)
                 incoming = historical_demand[selected_date]["incoming"][sid].get(current_hour, 0)
-                print(f"  Station {sid} → Outgoing: {outgoing}, Incoming: {incoming}")
+                #print(f"  Station {sid} → Outgoing: {outgoing}, Incoming: {incoming}")
                 
-            print(f"\n🧠 Agent Observations for {selected_date} (first 5 stations):")
-            for sid, obs in list(agent_observations.items())[:5]:
-                print(f"  {sid}: {obs}")
+            # print(f"\n🧠 Agent Observations for {selected_date} (first 5 stations):")
+            #for sid, obs in list(agent_observations.items())[:5]:
+            #    print(f"  {sid}: {obs}")
                 
-            print(f"\n🔄 Bike Movements for {selected_date} (first 5 stations):")
-            for sid, data in list(stations.items())[:5]:
-                print(f"  {sid}: Sent → {data['sent_bikes']} | Received → {data['received_bikes']}")
+            # print(f"\n🔄 Bike Movements for {selected_date} (first 5 stations):")
+            #for sid, data in list(stations.items())[:5]:
+            #    print(f"  {sid}: Sent → {data['sent_bikes']} | Received → {data['received_bikes']}")
 
             # Summary text for Dash
+           
+            stats_rows = []
+            
             total_completed = sum(data["completed_trips"] for data in stations.values())
             total_missed = sum(data["missed_trips"] for data in stations.values())
             total_bikes = sum(data["bike_count"] for data in stations.values())
+            
+            if (total_completed + total_missed) > 0:
+                trip_completion_rate = round((total_completed / (total_completed + total_missed)) * 100, 2)
+            else:
+                trip_completion_rate = 0
 
-            summary_text = f"""✅ Total completed trips: {total_completed} | ❌ Total missed trips: {total_missed} | 🚲 Total bikes remaining: {total_bikes}"""
+            station_availabilities = [
+                data["availability_sum"] / 300  # 300 frames in a day
+                for data in stations.values()
+                if "availability_sum" in data
+            ]
+            overall_availability = round(sum(station_availabilities) / len(station_availabilities), 2)
 
-            stats_rows = []
+            cost = rebalancing_cost_global[selected_date]      
+            summary_text = f"""✅ Completed: {total_completed} | ❌ Missed: {total_missed} | 🚲 Remaining Bikes: {total_bikes} | 🎯 Completion Rate: {trip_completion_rate}% | 📈 Availability: {overall_availability}% | 💸 Rebalancing Cost: {cost}"""
+
+            print(f"✅ FINAL rebalancing cost for {selected_date}: {cost}")
+            print(f"📊 Summary Text for {selected_date}: {summary_text}")
+
+            # Assign summary to correct side
+            if selected_date == "2022-05-05":
+                results[2] = summary_text
+            else:
+                results[5] = summary_text
+            
             for sid, data in stations.items():
                 # Get total outgoing/incoming from historical demand (May 5th)
                 # Store into results[2] and results[5]
@@ -391,13 +434,6 @@ def run_marl_simulation_step(n, stations_marl_global, in_transit_marl_global, la
                 total_out = sum(historical_demand[selected_date]["outgoing"][sid].values())
                 total_in = sum(historical_demand[selected_date]["incoming"][sid].values())
 
-                # Assign summary to correct side
-                if selected_date == "2022-05-05":
-                    results[2] = summary_text
-                else:
-                    results[5] = summary_text
-
-                    
                 # Determine status
                 activity = data["completed_trips"] + data["missed_trips"]
                 empty_ratio = data["was_empty"] / 300
@@ -432,7 +468,7 @@ def run_marl_simulation_step(n, stations_marl_global, in_transit_marl_global, la
 
             filename = f"datasets/station_stats_marl_{selected_date}.csv"
             pd.DataFrame(stats_rows).to_csv(filename, index=False)
-            print(f"✅ MARL stats exported to {filename}")
+            #print(f"✅ MARL stats exported to {filename}")
 
         for station in stations.values():
             if isinstance(station.get("early_sent_glow"), int) and station["early_sent_glow"] > 0:
@@ -475,7 +511,12 @@ def draw_map(stations, station_df, current_time):
         lons.append(lon)
         colors.append(get_color(count))
         sizes.append(min(9 + 0.5 * count, 15))
-        hovers.append(f"{name}<br><br>Bikes: {count}<br>Sent / Received: {sent} / {received}")
+        if current_time.hour == 23 and current_time.minute == 59:
+            availability = round(stations[sid].get("availability_sum", 0) / 300, 2)
+            hovers.append(f"{name}<br><br>Bikes: {count}<br><b>Avg Availability: {availability}%</b>")
+        else:
+            availability = round(100 * count / STATION_CAPACITY, 2)
+            hovers.append(f"{name}<br><br>Bikes: {count}<br>Availability: {availability}%")
 
     # --- Glow logic ---
     for sid in stations:
@@ -508,7 +549,6 @@ def draw_map(stations, station_df, current_time):
                 showlegend=False
             ))
 
-    # 💫 MARL redistribution halos (12:00–13:00)
     # 💫 MARL redistribution halos (12:00–13:00)
     if 12 <= current_time.hour <= 13:
         for sid in stations:
