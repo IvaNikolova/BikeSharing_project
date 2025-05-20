@@ -32,21 +32,22 @@ The project serves as a base for comparing:
 - Missed trips visualized on the map
 - Percentage of time when stations are healthy
 - Redistribution between 03:00–04:00 and 12:00–13:00
-
-**New**
+---
+### **New**
 - Evaluation Metrics:
   - Completed & missed trips
   - Completion rate
   - Rebalancing cost
   - Average availability rate
 - Stations stats updated
+---
+### **Coming Next:** DQN Rebalancing
 
-**Coming Next:** DQN Rebalancing
 Next major step: Implement a Multi-Agent DQN where each station becomes a decision-making agent that learns to:
 - Predict high-demand stations and rebalance accordingly
 - Minimize missed trips and improve system performance
 - Learn actions during off-peak hours (03:00–04:00 and 12:00–13:00)
-
+---
 ![Simulation Pic](images/simulation.png)
 ---
 ## Dataset
