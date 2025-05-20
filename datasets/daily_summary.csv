@@ -1,0 +1,3 @@
+simulated_day,method,completed_trips,missed_trips,completion_rate,rebalancing_cost,avg_availability
+2022-05-05,MARL,14630,0,100.0,0,98.73
+2022-05-11,MARL,29125,743,97.51,0,97.3

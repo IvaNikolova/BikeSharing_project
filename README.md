@@ -28,15 +28,24 @@ The project serves as a base for comparing:
 - Station-Level Trip Statistics Tracking
 - Station status indicators: busy, underused, always empty/full, balanced
 - Configurable Initial Station Stock
+- Incoming + Outgoing Trip Counts per Station
+- Missed trips visualized on the map
+- Percentage of time when stations are healthy
+- Redistribution between 03:00–04:00 and 12:00–13:00
 
 **New**
-- Incoming + Outgoing Trip Counts per Station
+- Evaluation Metrics:
+  - Completed & missed trips
+  - Completion rate
+  - Rebalancing cost
+  - Average availability rate
+- Stations stats updated
 
-**TO DO next**
-- Start Implementing the Demand-Based Redistribution scenario
-  - Define What Each Agent Will Do
-  - Define the Evaluation Metrics
-  - Set Up a Logic for Off-Peak Hours
+**Coming Next:** DQN Rebalancing
+Next major step: Implement a Multi-Agent DQN where each station becomes a decision-making agent that learns to:
+- Predict high-demand stations and rebalance accordingly
+- Minimize missed trips and improve system performance
+- Learn actions during off-peak hours (03:00–04:00 and 12:00–13:00)
 
 ![Simulation Pic](images/simulation.png)
 ---

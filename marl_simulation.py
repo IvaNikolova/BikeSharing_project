@@ -421,6 +421,21 @@ def run_marl_simulation_step(n, stations_marl_global, in_transit_marl_global, la
             print(f"✅ FINAL rebalancing cost for {selected_date}: {cost}")
             print(f"📊 Summary Text for {selected_date}: {summary_text}")
 
+            # === Save to daily_summary.csv ===
+            summary_row = {
+                "simulated_day": selected_date,
+                "method": "MARL",
+                "completed_trips": total_completed,
+                "missed_trips": total_missed,
+                "completion_rate": trip_completion_rate,
+                "rebalancing_cost": cost,
+                "avg_availability": overall_availability
+            }
+
+            summary_path = "datasets/daily_summary_marl.csv"
+            write_header = not os.path.exists(summary_path) or os.stat(summary_path).st_size == 0
+            pd.DataFrame([summary_row]).to_csv(summary_path, mode="a", header=write_header, index=False)
+
             # Assign summary to correct side
             if selected_date == "2022-05-05":
                 results[2] = summary_text
@@ -463,7 +478,8 @@ def run_marl_simulation_step(n, stations_marl_global, in_transit_marl_global, la
                     "status": status,
                     "total_outgoing": total_out,
                     "total_incoming": total_in,
-                    "healthy_percentage": healthy_percentage
+                    "healthy_percentage": healthy_percentage,
+                    "avg_availability": round(data.get("availability_sum", 0) / 300, 2)
                 })
 
             filename = f"datasets/station_stats_marl_{selected_date}.csv"
@@ -511,7 +527,7 @@ def draw_map(stations, station_df, current_time):
         lons.append(lon)
         colors.append(get_color(count))
         sizes.append(min(9 + 0.5 * count, 15))
-        if current_time.hour == 23 and current_time.minute == 59:
+        if current_time.hour == 00 and current_time.minute == 00:
             availability = round(stations[sid].get("availability_sum", 0) / 300, 2)
             hovers.append(f"{name}<br><br>Bikes: {count}<br><b>Avg Availability: {availability}%</b>")
         else:

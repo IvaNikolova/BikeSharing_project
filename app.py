@@ -264,6 +264,21 @@ def update_dual_simulation(n):
 
             summary_text = f"""✅ Completed: {total_completed} | ❌ Missed: {total_missed} | 🚲 Remaining Bikes: {total_bikes} | 🎯 Completion Rate: {trip_completion_rate}% | 📈 Availability: {overall_availability}% """
 
+            # === Save to daily_summary.csv ===
+            summary_row = {
+                "simulated_day": selected_date_str,
+                "method": "MARL",
+                "completed_trips": total_completed,
+                "missed_trips": total_missed,
+                "completion_rate": trip_completion_rate,
+                "rebalancing_cost": 0,
+                "avg_availability": overall_availability
+            }
+
+            summary_path = "datasets/daily_summary.csv"
+            write_header = not os.path.exists(summary_path) or os.stat(summary_path).st_size == 0
+            pd.DataFrame([summary_row]).to_csv(summary_path, mode="a", header=write_header, index=False)
+            
             if selected_date_str == "2022-05-05":
                 summary_left_text = summary_text
             else:
@@ -341,7 +356,7 @@ def update_dual_simulation(n):
                 healthy_percentage = round(healthy_frames / total_frames * 100)
                 healthy_line = f"<br>Healthy Time: {healthy_percentage}%"
                 avg_availability = round(stations_global[selected_date_str][sid]["availability_sum"] / total_frames, 2)
-                availability_rate = f"<br>Average Availability: {avg_availability}%"
+                availability_rate = f"<br><b>Avg Availability: {avg_availability}%"
             else:
                 status_line = ""
                 trips_line = ""
