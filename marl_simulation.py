@@ -5,8 +5,10 @@ from marl_demand_utils import load_historical_demand
 from plotly.graph_objects import Figure 
 import os
 import csv
+from dqn_agent import DQNAgent, StationAgent
 
 missed_path = "datasets/missed_trips_marl.csv"
+CKPT_PATH = "./checkpoints/dqn_agent.pth"
 
 # Write header only once, if file does not exist
 if not os.path.exists(missed_path):
@@ -20,16 +22,32 @@ trip_dfs = {
     "2022-05-11": pd.read_csv("datasets/all_trips_05_11.csv", parse_dates=["start_time", "end_time"]),
 }
 
+# —— DQN imports & initialization ——
+# Define your state/action dimensions (must match StationAgent._obs_to_vector)
+state_dim  = 8   # [count, demand_out, demand_in, empty_ratio, full_ratio, hour, prev_action]
+action_dim = 7   # 1 “do nothing” + 3 “send X” + 3 “request X” (we’ll map these below)
+
+# Shared DQN agent and one StationAgent per station
+shared_agent  = DQNAgent(state_dim=state_dim, action_dim=action_dim)
+#shared_agent.load(CKPT_PATH)
+station_ids   = station_df["station_id"].astype(str).tolist()
+station_agents = {
+    sid: StationAgent(station_id=sid, agent=shared_agent)
+    for sid in station_ids
+}
+# — end DQN setup —
+
 initial_bike_counts = {}
 stats_df = pd.read_csv("datasets/station_stats_2022-05-05.csv")
 station_demand = {str(row["station_id"]): row["completed_trips"] for _, row in stats_df.iterrows()}
-sorted_demand = sorted(station_demand.items(), key=lambda x: x[1], reverse=True)
-demand_receivers = [sid for sid, _ in sorted_demand[:60]]  # Top 60 stations
-demand_donors = [sid for sid, _ in sorted_demand[-60:]]    # Bottom 60 stations
+
 rebalancing_cost_global = {
         "2022-05-05": 0,
         "2022-05-11": 0
     }
+
+moved_3_4_global   = { date: 0 for date in rebalancing_cost_global }
+moved_12_13_global = { date: 0 for date in rebalancing_cost_global }
 
 redistribution_mapping = {
     row["station_id"]: row["status"]
@@ -52,9 +70,28 @@ for day, df in trip_dfs.items():
     }
 
 SPEED_MULTIPLIER = (24 * 60 * 60) / (5 * 60)  # 24h in 5min
-early_redistribution_done = set()
 redistribution_in_transit_list = {}
-STATION_CAPACITY = 30
+STATION_CAPACITY = 40
+STATIC_MAX_CAPACITY = STATION_CAPACITY + 20
+
+# how many simulation‐steps make up a full day
+STEPS_PER_DAY = 300
+
+# these are your module‐level globals:
+stations_marl_global       = {}
+in_transit_marl_global     = {}
+last_update_marl_global    = {}
+last_frame_marl_frame      = {}
+redistribution_in_transit  = []
+
+def _reset_globals():
+    """Clear out everything so we can start a fresh day."""
+    stations_marl_global.clear()
+    in_transit_marl_global.clear()
+    last_update_marl_global.clear()
+    last_frame_marl_frame.clear()
+    # if you used per-date lists inside a dict, clear those too:
+    redistribution_in_transit.clear()
 
 # Helper function for marker colors
 def get_color(count):
@@ -63,75 +100,101 @@ def get_color(count):
     elif 15 < count <= 30: return "green"
     else: return "blue"
 
-def build_agent_observation(station_id, current_hour, station_data, historical_demand, selected_date, total_frames):
-    # Builds the full observation dictionary for a station-agent.
+def build_agent_observation(
+    station_id,
+    current_hour,
+    station_data,
+    historical_demand,
+    selected_date,
+    total_frames,
+    donors=None,
+    receivers=None
+):
+    # Base two lines unchanged
     station_data = station_data.get(station_id, {})
-
+    
     outgoing = historical_demand[selected_date]["outgoing"][station_id].get(current_hour, 0)
     incoming = historical_demand[selected_date]["incoming"][station_id].get(current_hour, 0)
+    
+    outgoing_1 = outgoing
+    outgoing_2 = historical_demand[selected_date]["outgoing"][station_id].get(current_hour + 1, 0)
+    outgoing_3 = historical_demand[selected_date]["outgoing"][station_id].get(current_hour + 2, 0)
+    outgoing_4 = historical_demand[selected_date]["outgoing"][station_id].get(current_hour + 3, 0)
+    outgoing_5 = historical_demand[selected_date]["outgoing"][station_id].get(current_hour + 4, 0)
+    outgoing_5hr = outgoing_1 + outgoing_2 + outgoing_3 + outgoing_4 + outgoing_5
+
 
     was_empty_ratio = station_data.get("was_empty", 0) / total_frames if total_frames > 0 else 0
-    was_full_ratio = station_data.get("was_full", 0) / total_frames if total_frames > 0 else 0
-
-    return {
-        "current_bike_count": station_data.get("bike_count", 0),
+    was_full_ratio  = station_data.get("was_full",  0) / total_frames if total_frames > 0 else 0
+    
+    if donors is None or receivers is None:
+        donors    = [station_id]
+        receivers = [station_id]
+    
+    obs = {
+        "current_bike_count":       station_data.get("bike_count", 0),
         "historical_demand_next_hr": outgoing,
         "historical_inflow_next_hr": incoming,
-        "was_empty_ratio": was_empty_ratio,
-        "was_full_ratio": was_full_ratio,
-        "current_hour": current_hour,
-        "previous_action": station_data.get("previous_action", "do_nothing")
+        "outgoing_5hr":              outgoing_5hr,
+        "was_empty_ratio":           was_empty_ratio,
+        "was_full_ratio":            was_full_ratio,
+        "current_hour":              current_hour,
+        "previous_action":           station_data.get("previous_action", "do_nothing"),
     }
+
+    # ——— Wire in dynamic donors/receivers passed from run_marl_simulation_step ———
+    if station_id in donors:
+        partners = receivers[:3]
+    else:
+        partners = donors[:3]
+
+    # Now actually put them into the observation
+    for idx, pid in enumerate(partners, start=1):
+        obs[f"top_partner_{idx}"] = pid
+    # If fewer than 3 partners, fill the rest with “do_nothing”
+    for idx in range(len(partners)+1, 4):
+        obs[f"top_partner_{idx}"] = station_id  # self-loop => “do nothing”
+
+
+    return obs
+
     
-def perform_early_morning_redistribution(
-    stations,
-    redistribution_in_transit_list,
-    selected_date,
-    current_time,
-    target_level = 18,
-    rebalancing_cost=0,
-    rebalancing_cost_global=None):
-   
-    # Identify donors and receivers
-    donors = {sid: data for sid, data in stations.items()
-              if data["bike_count"] > target_level}
-    receivers = {sid: data for sid, data in stations.items()
-                 if data["bike_count"] < target_level}
+def compute_reward_for_station(station_id, stations, missed_weight=50.0, move_weight=0.005):
+    """
+    Composite reward:
+      -10 × missed_trips
+      + 2 × completed_trips
+      - 0.1 × bikes_moved
+      - 0.2 × deviation from ideal_level (set later)
+    """
+    s = stations[station_id]
+    # 1) Missed/completed
+    r = - missed_weight * s.get("missed_trips", 0)
+    # 2) Cost of moves
+    moved = s.get("sent_bikes", 0) + s.get("received_bikes", 0)
+    r   -= move_weight * moved
+    # 3) Deviation from dynamic ideal—filled in by caller
+    # 4) Overflow penalty
+    overflow = s.get("overflow_attempts", 0)
+    r        -= 5.0 * overflow
+    
+    return r
+    
+def transfer_bikes(from_id: str, to_id: str, qty: int, stations: dict):
+    """
+    Immediately move `qty` bikes from station `from_id` to station `to_id`.
+    Updates bike_count, plus sent_bikes / received_bikes counters.
+    """
+    # Safety clamp: don’t go negative
+    moved = min(qty, stations[from_id]["bike_count"])
+    
+    # Decrement origin
+    stations[from_id]["bike_count"] -= moved
+    stations[from_id]["sent_bikes"]      = stations[from_id].get("sent_bikes", 0) + moved
 
-    for sid_from, data_from in donors.items():
-        surplus = data_from["bike_count"] - target_level
-        if surplus <= 0:
-            continue
-
-        for sid_to, data_to in receivers.items():
-            deficit = target_level - data_to["bike_count"]
-            if deficit <= 0:
-                continue
-
-            move_qty = min(surplus, deficit)
-
-            # Update counts
-            stations[sid_from]["bike_count"] -= move_qty
-            stations[sid_to]["bike_count"]   += move_qty
-            stations[sid_from]["early_sent_glow"] = 3 
-            rebalancing_cost += move_qty
-            rebalancing_cost_global[selected_date] += move_qty  
-            print(f"🧾 Early-morning: +{move_qty} → rebalancing_cost for {selected_date} = {rebalancing_cost_global[selected_date]}")
-            
-            redistribution_in_transit_list.append({
-                "end_id": sid_to,
-                "quantity": move_qty,
-                "end_time": current_time + timedelta(minutes=45),
-                "from_id": sid_from  
-            })
-
-            # print(f"  🚚 {move_qty} bikes moved from {sid_from} → {sid_to}")
-            surplus -= move_qty
-            if surplus <= 0:
-                break  
-            
-    return rebalancing_cost
- 
+    # Increment destination
+    stations[to_id]["bike_count"]        = stations[to_id].get("bike_count", 0) + moved
+    stations[to_id]["received_bikes"]    = stations[to_id].get("received_bikes", 0) + moved
 
 # Main function of MARL sim
 def run_marl_simulation_step(n, stations_marl_global, in_transit_marl_global, last_update_marl_global, last_frame_marl_frame, redistribution_in_transit_list):
@@ -178,7 +241,7 @@ def run_marl_simulation_step(n, stations_marl_global, in_transit_marl_global, la
             in_transit_marl_global[selected_date] = []
             last_update_marl_global[selected_date] = sim_date
             redistribution_in_transit_list = in_transit_marl_global["redistribution_in_transit_list"][selected_date]
-            
+                        
             # Overwrite missed_trips_marl.csv for fresh start (only once)
             if selected_date == "2022-05-05":
                 with open("datasets/missed_trips_marl.csv", "w", newline="") as f:
@@ -197,37 +260,6 @@ def run_marl_simulation_step(n, stations_marl_global, in_transit_marl_global, la
             raise PreventUpdate
         
         last_frame_marl_frame[selected_date] = n
-        
-        # Early redistribution trigger (3:00–4:00)
-        if selected_date not in early_redistribution_done:
-            if 3 <= current_time.hour < 4:
-                rebalancing_cost = perform_early_morning_redistribution(
-                    stations,
-                    redistribution_in_transit_list,
-                    selected_date,
-                    current_time,
-                    target_level=18,
-                    rebalancing_cost=rebalancing_cost,
-                    rebalancing_cost_global=rebalancing_cost_global                )
-                early_redistribution_done.add(selected_date)
-
-        # Handle returns
-        to_return = [trip for trip in in_transit if trip["end_time"] <= current_time]
-        for trip in to_return:
-            end_id = str(trip["end_id"])
-            if end_id in stations:
-                stations[end_id]["bike_count"] += 1
-            in_transit.remove(trip)
-            
-        # Handle redistributed bikes arriving after delay
-        redistributed_arrivals = [t for t in redistribution_in_transit_list if t["end_time"] <= current_time]
-        for trip in redistributed_arrivals:
-            if trip["end_id"] in stations:
-                stations[trip["end_id"]]["bike_count"] += trip["quantity"]
-                stations[trip["end_id"]]["received_bikes"] += trip["quantity"]
-                stations[trip["end_id"]]["early_received_glow"] = 3  
-
-            redistribution_in_transit_list.remove(trip)
  
         # Track how often each MARL station is empty or full
         for sid in stations:
@@ -288,44 +320,207 @@ def run_marl_simulation_step(n, stations_marl_global, in_transit_marl_global, la
         # Build Observation for each agent
         total_frames = n + 1
         current_hour = current_time.hour
-
-        agent_observations = {
-            sid: build_agent_observation(
-                sid, current_hour,
-                stations, historical_demand,
-                selected_date, total_frames
+        
+        # ——— Dynamic per-station capacity ———
+        station_capacity = {}
+        for sid, data in stations.items():
+            # sum outgoing demand for next 3 hours
+            future_demand = sum(
+                historical_demand[selected_date]["outgoing"][sid].get(h, 0)
+                for h in range(current_hour, current_hour + 3)
             )
-            for sid in stations
-        }
+            # allow +1 slot per 5 forecasted trips, up to + 20 extra
+            extra_slots = min(future_demand // 5, 20)
+            station_capacity[sid] = STATION_CAPACITY + extra_slots
+        # ————————————————————————————————
+
+        # Handle returns
+        to_return = [trip for trip in in_transit if trip["end_time"] <= current_time]
+        for trip in to_return:
+            end_id = str(trip["end_id"])
+            if end_id in stations:
+                # riders always return their bikes
+                stations[end_id]["bike_count"] += 1
+            in_transit.remove(trip)
+            
+        # Handle redistributed bikes arriving after delay
+        redistributed_arrivals = [t for t in redistribution_in_transit_list if t["end_time"] <= current_time]
+        for trip in redistributed_arrivals:
+            end_id = str(trip["end_id"])
+            if end_id in stations:
+               # we planned correctly, so just add back every bike we moved
+                # we guaranteed this at plan time—just add back everything
+                stations[end_id]["bike_count"] += trip["quantity"]
+                stations[end_id]["received_bikes"] += trip["quantity"]
+                stations[end_id]["early_received_glow"] = 3
+
+            redistribution_in_transit_list.remove(trip)
+        
+        # == 3:00–4:00 equal‐spread rebalancing ==
+        if 3 <= current_hour < 4:
+            counts = [data["bike_count"] for data in stations.values()]
+            avg = sum(counts) // len(counts)
+            donors    = {sid: data["bike_count"] - avg
+                         for sid, data in stations.items() if data["bike_count"] > avg}
+            receivers = {sid: avg - data["bike_count"]
+                         for sid, data in stations.items() if data["bike_count"] < avg}
+            for from_id, surplus in donors.items():
+                for to_id, need in list(receivers.items()):
+                    qty = min(surplus, need)
+                    qty = min(qty, stations[from_id]["bike_count"])  # <-- clamp to what’s actually there
+                    if qty <= 0:
+                        continue
+                    
+                    # 1) schedule the move for +1 hour
+                    redistribution_in_transit_list.append({
+                        "from_id":    from_id,
+                        "end_id":     to_id,
+                        "quantity":   qty,
+                        "end_time":   current_time + timedelta(hours=1)
+                    })
+
+                   # 2) immediately remove bikes from sender
+                    stations[from_id]["bike_count"]   -= qty
+                    stations[from_id]["sent_bikes"]   = stations[from_id].get("sent_bikes", 0) + qty
+
+                    # 3) glow
+                    stations[from_id]["early_sent_glow"] = 3
+
+                    # 4) cost
+                    rebalancing_cost += qty
+                    rebalancing_cost_global[selected_date] += qty
+                    moved_3_4_global[selected_date] += qty
+
+                    # 5) reduce outstanding need
+                    receivers[to_id] -= qty
+                    surplus         -= qty
+
         
         # Demand-based redistribution (12:00–13:00) 
         if 12 <= current_hour < 13:
-            for sid_from in demand_donors:
-                if sid_from not in stations or stations[sid_from]["bike_count"] <= 18:
-                    continue
+            # ——— DYNAMIC DONOR/RECEIVER RANKING ———
+            # Score each station by (predicted demand next hour) - (current bike count)
+            scores = {}
+            for sid, data in stations.items():
+                # data["historical_demand_next_hr"] is already in your obs,
+                # but here we read directly from historical_demand
+                demand = historical_demand[selected_date]["outgoing"][sid].get(current_hour, 0)
+                bikes  = data["bike_count"]
+                scores[sid] = demand - bikes
 
-                for sid_to in demand_receivers:
-                    if sid_to not in stations:
-                        continue
+            # sort ascending: lowest scores (surplus) are donors, highest (need) are receivers
+            sorted_sids = sorted(scores, key=scores.get)
+            demand_donors    = sorted_sids[:60]
+            demand_receivers = sorted_sids[-60:]
+            # print(f"[12h] donors (first 5): {demand_donors[:5]}, receivers (first 5): {demand_receivers[:5]}")
 
-                    if stations[sid_to]["bike_count"] >= 30:
-                        continue
+            # ——————————————————————————————
+            
+            # 1) Build observations for every station
+            observations = {
+                sid: build_agent_observation(
+                        station_id     = sid,
+                        current_hour   = current_hour,
+                        station_data   = stations,
+                        historical_demand = historical_demand,
+                        selected_date  = selected_date,
+                        total_frames   = total_frames,
+                        donors         = demand_donors,
+                        receivers      = demand_receivers
+                    )
+                for sid in station_ids
+            }
 
-                    move_qty = min(stations[sid_from]["bike_count"] - 18, 30 - stations[sid_to]["bike_count"])
-                    if move_qty <= 0:
-                        continue
+            # 2) Have each StationAgent choose an action
+            actions = {
+                sid: station_agents[sid].observe_and_act(observations[sid])
+                for sid in station_ids
+            }
 
-                    stations[sid_from]["bike_count"] -= move_qty
-                    stations[sid_to]["received_bikes"] += move_qty
-                    stations[sid_from]["sent_bikes"] += move_qty  
-                    rebalancing_cost += move_qty
-                    rebalancing_cost_global[selected_date] += move_qty
-                    redistribution_in_transit_list.append({
-                        "end_time": current_time + timedelta(minutes=45),
-                        "end_id": sid_to,
-                        "quantity": move_qty
-                    })
-                    print(f"🧾 Noon: +{move_qty} → rebalancing_cost for {selected_date} = {rebalancing_cost_global[selected_date]}")
+            # 3) Map each action index to a concrete bike move
+            moves = []      # list of (from_id, to_id, qty)
+            for sid, act in actions.items():
+                if act == 0:
+                    continue  # do nothing
+                # acts 1–3 = send 5 bikes to top_partner_1/2/3
+                elif 1 <= act <= 3:
+                    partner = observations[sid][f"top_partner_{act}"]
+                    # only send as many as destination can hold
+                    # how many we *could* add
+                    desired = 5
+                    free_slots = STATIC_MAX_CAPACITY - stations[partner]["bike_count"]
+                    # record overflow attempts
+                    overflow = max(0, desired - free_slots)
+                    if overflow > 0:
+                        stations[sid].setdefault("overflow_attempts", 0)
+                        stations[sid]["overflow_attempts"] += overflow                    
+                    send_qty  = min(5, stations[sid]["bike_count"], free_slots)
+                    if send_qty > 0:
+                        moves.append((sid, partner, send_qty))                
+                # acts 4–6 = request 5 bikes from top_partner_{act-3}
+                else:
+                    partner = observations[sid][f"top_partner_{act-3}"]
+                    moves.append((partner, sid, 5))
+
+            # 4) Apply all moves in bulk
+            for frm, to, requested_qty in moves:
+                # clamp to what’s actually available
+                moved_qty = min(requested_qty, stations[frm]["bike_count"])
+                if moved_qty <= 0:
+                  continue
+        
+                # remove from sender now
+                stations[frm]["bike_count"] -= moved_qty
+                stations[frm]["sent_bikes"] = stations[frm].get("sent_bikes", 0) + moved_qty
+                stations[frm]["early_sent_glow"] = 1
+        
+                # schedule exactly what we removed
+                redistribution_in_transit_list.append({
+                    "from_id":  frm,
+                    "end_id":   to,
+                    "quantity": moved_qty,
+                    "end_time": current_time + timedelta(hours=1)
+                })
+        
+                # track the cost on the same moved_qty
+                rebalancing_cost += moved_qty
+                rebalancing_cost_global[selected_date] += moved_qty
+                moved_12_13_global[selected_date] += moved_qty
+
+        
+            # 5) Record the reward & next observation for each station
+            for sid in station_ids:
+                # dynamic ideal: 1 slot per 2 forecasted trips + base 15
+                outgoing = historical_demand[selected_date]["outgoing"][sid].get(current_hour, 0)
+                ideal    = 15 + (outgoing / 2)
+                # now get the reward
+                reward = compute_reward_for_station(
+                    sid, stations,
+                    missed_weight=50.0,
+                    move_weight=0.005
+                )
+                # subtract deviation from that ideal
+                count = stations[sid]["bike_count"]
+                reward -= 0.2 * abs(count - ideal)
+                
+                next_obs= build_agent_observation(
+                             station_id = sid,
+                             current_hour= current_hour,
+                             station_data= stations,
+                             historical_demand= historical_demand,
+                             selected_date= selected_date,
+                             total_frames= total_frames,
+                             donors = demand_donors,
+                             receivers = demand_receivers
+                         )
+                station_agents[sid].record(reward, next_obs, done=False)
+            
+            shared_agent.update()
+            shared_agent.save(CKPT_PATH)
+                
+            #print("Replay buffer size:", len(shared_agent.replay_buffer))
+            #print("Sample action dist:", {a: list(actions.values()).count(a) for a in set(actions.values())})
+
         
         # === Draw map ===
         lats, lons, colors, sizes, hovers = [], [], [], [], []
@@ -372,16 +567,16 @@ def run_marl_simulation_step(n, stations_marl_global, in_transit_marl_global, la
             # Make sure results has at least 6 slots (for index 2 and 5)
             while len(results) < 6:
                 results.append("")
-            print(f"\n Simulation Summary for {selected_date}:")
+          #  print(f"\n Simulation Summary for {selected_date}:")
 
             # === 1. Empty / Full Count Debug ===
-            print("\n Empty / Full Tracking (first 5 stations):")
-            for sid, data in list(stations.items())[:5]:
-               print(f"  Station {sid} → was_empty: {data['was_empty']}, was_full: {data['was_full']}")
+         #   print("\n Empty / Full Tracking (first 5 stations):")
+          #  for sid, data in list(stations.items())[:5]:
+         #      print(f"  Station {sid} → was_empty: {data['was_empty']}, was_full: {data['was_full']}")
 
             # === 2. Incoming / Outgoing Demand Debug ===
-            current_hour = current_time.hour
-            print(f"\n Historical Demand (Hour {current_hour}) for first 5 stations:")
+           # current_hour = current_time.hour
+         #   print(f"\n Historical Demand (Hour {current_hour}) for first 5 stations:")
             for sid in list(stations.keys())[:5]:
                 outgoing = historical_demand[selected_date]["outgoing"][sid].get(current_hour, 0)
                 incoming = historical_demand[selected_date]["incoming"][sid].get(current_hour, 0)
@@ -401,8 +596,9 @@ def run_marl_simulation_step(n, stations_marl_global, in_transit_marl_global, la
             
             total_completed = sum(data["completed_trips"] for data in stations.values())
             total_missed = sum(data["missed_trips"] for data in stations.values())
+            # only count bikes actually at stations
             total_bikes = sum(data["bike_count"] for data in stations.values())
-            
+                     
             if (total_completed + total_missed) > 0:
                 trip_completion_rate = round((total_completed / (total_completed + total_missed)) * 100, 2)
             else:
@@ -415,11 +611,14 @@ def run_marl_simulation_step(n, stations_marl_global, in_transit_marl_global, la
             ]
             overall_availability = round(sum(station_availabilities) / len(station_availabilities), 2)
 
-            cost = rebalancing_cost_global[selected_date]      
-            summary_text = f"""✅ Completed: {total_completed} | ❌ Missed: {total_missed} | 🚲 Remaining Bikes: {total_bikes} | 🎯 Completion Rate: {trip_completion_rate}% | 📈 Availability: {overall_availability}% | 💸 Rebalancing Cost: {cost}"""
+            cost = rebalancing_cost_global[selected_date]
+            m3_4  = moved_3_4_global[selected_date]
+            m12_13 = moved_12_13_global[selected_date]
+      
+            summary_text = f"""✅ Completed: {total_completed} | ❌ Missed: {total_missed} | 🚲 Remaining Bikes: {total_bikes} | 🎯 Completion Rate: {trip_completion_rate}% | 📈 Availability: {overall_availability}% | 💸 Rebalancing Cost: {cost} (🔄 Moved 3–4 h: {m3_4} & 🔄 Moved 12–13 h: {m12_13})"""
 
-            print(f"✅ FINAL rebalancing cost for {selected_date}: {cost}")
-            print(f"📊 Summary Text for {selected_date}: {summary_text}")
+          #  print(f"✅ FINAL rebalancing cost for {selected_date}: {cost}")
+           # print(f"📊 Summary Text for {selected_date}: {summary_text}")
 
             # === Save to daily_summary.csv ===
             summary_row = {
@@ -429,7 +628,10 @@ def run_marl_simulation_step(n, stations_marl_global, in_transit_marl_global, la
                 "missed_trips": total_missed,
                 "completion_rate": trip_completion_rate,
                 "rebalancing_cost": cost,
-                "avg_availability": overall_availability
+                "avg_availability": overall_availability,
+                "ramaining_bikes": total_bikes,
+                "moved_3_4_h":   m3_4,
+                "moved_12_13_h": m12_13,
             }
 
             summary_path = "datasets/daily_summary_marl.csv"
@@ -485,6 +687,13 @@ def run_marl_simulation_step(n, stations_marl_global, in_transit_marl_global, la
             filename = f"datasets/station_stats_marl_{selected_date}.csv"
             pd.DataFrame(stats_rows).to_csv(filename, index=False)
             #print(f"✅ MARL stats exported to {filename}")
+            
+            # ——— Train DQN with today’s experiences ———
+            n_updates = 50
+            for _ in range(n_updates):
+                shared_agent.update()
+                
+           # print(f"End of day training done. ε = {shared_agent.epsilon:.3f}")
 
         for station in stations.values():
             if isinstance(station.get("early_sent_glow"), int) and station["early_sent_glow"] > 0:
@@ -492,13 +701,12 @@ def run_marl_simulation_step(n, stations_marl_global, in_transit_marl_global, la
             if isinstance(station.get("early_received_glow"), int) and station["early_received_glow"] > 0:
                 station["early_received_glow"] -= 1
                 
-            if 12 <= current_time.hour < 13:
-                continue  # keep glow active
+           
             station["sent_bikes"] = 0
             station["received_bikes"] = 0
 
-        last_update_marl_global[selected_date] = current_time
-
+        last_update_marl_global[selected_date] = current_time        
+    
     return (
         results[0],  # map_marl_05_05
         results[3],  # map_marl_05_11
@@ -565,36 +773,6 @@ def draw_map(stations, station_df, current_time):
                 showlegend=False
             ))
 
-    # 💫 MARL redistribution halos (12:00–13:00)
-    if 12 <= current_time.hour <= 13:
-        for sid in stations:
-            station = stations[sid]
-            row = station_df[station_df["station_id"] == sid]
-            if row.empty:
-                continue
-            lat = row.iloc[0]["lat"]
-            lon = row.iloc[0]["lon"]
-
-            if station.get("sent_bikes", 0) > 0:
-                fig.add_trace(go.Scattermapbox(
-                    lat=[lat],
-                    lon=[lon],
-                    mode="markers",
-                    marker=go.scattermapbox.Marker(size=22, color="cyan", opacity=0.8),
-                    hoverinfo="skip",
-                    showlegend=False
-                ))
-            elif station.get("received_bikes", 0) > 0:
-                fig.add_trace(go.Scattermapbox(
-                    lat=[lat],
-                    lon=[lon],
-                    mode="markers",
-                    marker=go.scattermapbox.Marker(size=22, color="chartreuse", opacity=0.8),
-                    hoverinfo="skip",
-                    showlegend=False
-                ))
-   
-
     # ⛔ Missed trip glow
     for sid in stations:
         station = stations[sid]
@@ -635,3 +813,54 @@ def draw_map(stations, station_df, current_time):
     )
 
     return fig
+
+def simulate_one_day():
+    shared_agent.epsilon = max(shared_agent.epsilon, 0.2)
+
+    """ Resets globals, runs a full day, trains, and returns (summary_text, cost). """
+    # --- reset all per-day globals, leave shared_agent intact ---
+    stations_marl_global.clear()
+    in_transit_marl_global.clear()
+    last_update_marl_global.clear()
+    last_frame_marl_frame.clear()
+    redistribution_in_transit.clear()
+
+    for date in rebalancing_cost_global:
+        rebalancing_cost_global[date] = 0
+        moved_3_4_global[date]   = 0
+        moved_12_13_global[date] = 0
+        
+    day_summary = None
+    day_cost    = 0
+
+    for n in range(STEPS_PER_DAY + 1):
+        out = run_marl_simulation_step(
+            n,
+            stations_marl_global,
+            in_transit_marl_global,
+            last_update_marl_global,
+            last_frame_marl_frame,
+            redistribution_in_transit
+        )
+        if n == STEPS_PER_DAY:
+            day_summary = out[4]
+
+            # — Compute total_missed from final stations — 
+            sim_date       = list(stations_marl_global.keys())[0]
+            final_stations = stations_marl_global[sim_date]
+            total_missed   = sum(s.get("missed_trips", 0) for s in final_stations.values())
+            
+            # global zero-miss bonus
+            for sid, data in final_stations.items():   # ← use final_stations instead of stations
+                if data.get("missed_trips", 0) == 0:
+                    station_agents[sid].agent.store_transition(
+                        station_agents[sid].last_state,
+                        station_agents[sid].last_action,
+                        20.0,                # per‐station zero‐miss bonus
+                        station_agents[sid].last_state,
+                        True
+                    )
+            # parse the cost directly from your global tracker, e.g.:
+            day_cost = rebalancing_cost_global["2022-05-05"]
+
+    return day_summary, day_cost

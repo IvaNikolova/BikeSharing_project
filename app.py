@@ -267,7 +267,7 @@ def update_dual_simulation(n):
             # === Save to daily_summary.csv ===
             summary_row = {
                 "simulated_day": selected_date_str,
-                "method": "MARL",
+                "method": "basic",
                 "completed_trips": total_completed,
                 "missed_trips": total_missed,
                 "completion_rate": trip_completion_rate,
@@ -399,8 +399,8 @@ def update_dual_simulation(n):
         ))
 
         fig.update_layout(
-            mapbox=dict(
-                style="carto-positron",
+            mapbox=dict(                
+                style="carto-positron",  
                 center=dict(
                     lat=sum(latitudes) / len(latitudes),
                     lon=sum(longitudes) / len(longitudes)
