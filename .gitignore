@@ -1,1 +1,6 @@
 datasets/old/tripdata_2022.csv
+# ignore the virtualenv entirely
+venv/
+__pycache__/
+*.pyc
+.DS_Store
