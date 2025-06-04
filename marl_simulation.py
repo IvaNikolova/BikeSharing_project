@@ -808,7 +808,9 @@ def draw_map(stations, station_df, current_time):
             center=dict(lat=sum(lats)/len(lats), lon=sum(lons)/len(lons)),
             zoom=12
         ),
-        margin=dict(l=0, r=0, t=30, b=0),
+        margin=dict(l=0, r=0, t=0, b=0),
+        paper_bgcolor="rgba(0,0,0,0)", 
+        plot_bgcolor="rgba(0,0,0,0)",
         showlegend=False
     )
 

@@ -78,7 +78,6 @@ def get_color(bike_count):
     [Output('map_05_05', 'figure'),
      Output('map_05_11', 'figure'),
      Output('progress-bar', 'value'),
-     Output('progress-label', 'children'),
      Output('missed-trips-05', 'children'),
      Output('missed-trips-11', 'children'),
      Output('current-time', 'children'),
@@ -407,15 +406,14 @@ def update_dual_simulation(n):
                 ),
                 zoom=12
             ),
-            margin=dict(l=0, r=0, t=40, b=0),
+            margin=dict(l=0, r=0, t=0, b=0),
+            paper_bgcolor="rgba(0,0,0,0)", 
+            plot_bgcolor="rgba(0,0,0,0)",
             showlegend=False
         )
         results.extend([fig, f"❌ Missed trips: {len(missed_trip_rows)}"])
 
-    # Progress bar
-    timer_text = f"Progress: {progress_percent}%"
-
-    return (results[0], results[2], progress_percent, timer_text, results[1], results[3], f"Time:  {current_sim_time.strftime('%H:%M')}", summary_left_text, summary_right_text )
+    return (results[0], results[2], progress_percent, results[1], results[3], f"Time:  {current_sim_time.strftime('%H:%M')}", summary_left_text, summary_right_text )
 
 @app.callback(
     [Output('map_marl_05_05', 'figure'),
